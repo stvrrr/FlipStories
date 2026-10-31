@@ -584,6 +584,7 @@ export default function HomePage() {
   const [storyDescription, setStoryDescription] = useState("");
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [storyVisibility, setStoryVisibility] = useState<"public" | "followers" | "private">("public");
+  const [storyPremiumUntil, setStoryPremiumUntil] = useState<string>("");
   const [editingStoryId, setEditingStoryId] = useState<string | null>(null);
   const [publicProfileUsername, setPublicProfileUsername] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -679,7 +680,7 @@ export default function HomePage() {
     setFollowingPeople(people);
   };
   const loadStories = async () => {
-    const storySelect = "id,title,excerpt,category,created_at,author_id,is_pinned,pin_label,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)";
+    const storySelect = "id,title,excerpt,category,created_at,author_id,is_pinned,pin_label,premium_until,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)";
     let { data, error } = await supabase
       .from("stories")
       .select(storySelect)
@@ -689,7 +690,7 @@ export default function HomePage() {
     if (error) {
       ({ data } = await supabase
         .from("stories")
-        .select("id,title,excerpt,category,created_at,author_id,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)")
+        .select("id,title,excerpt,category,created_at,author_id,premium_until,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)")
         .eq("status", "published")
         .eq("visibility", "public")
         .order("published_at", { ascending: false }));
@@ -703,6 +704,7 @@ export default function HomePage() {
       created_at: string;
       is_pinned?: boolean;
       pin_label?: string | null;
+      premium_until: string | null;
       profiles: { username: string; display_name: string; avatar_url: string | null } | { username: string; display_name: string; avatar_url: string | null }[] | null;
       likes: Array<{ count: number }>;
     }>;
@@ -719,12 +721,24 @@ export default function HomePage() {
         Number(row.like_count),
       ] as const),
     );
-    const pageContent = await Promise.all(loaded.map(async (story) => {
+    const { data: { user: currentUser } } = await supabase.auth.getUser();
+    let hasPremiumAccess = false;
+    if (currentUser) {
+      const { data: premiumProfile } = await supabase
+        .from("profiles")
+        .select("is_premium,premium_until")
+        .eq("id", currentUser.id)
+        .maybeSingle();
+      hasPremiumAccess = Boolean(premiumProfile?.is_premium && (!premiumProfile.premium_until || new Date(premiumProfile.premium_until).getTime() > Date.now()));
+    }
+    const now = Date.now();
+    const accessibleStories = loaded.filter((story) => !story.premium_until || new Date(story.premium_until).getTime() <= now || hasPremiumAccess);
+    const pageContent = await Promise.all(accessibleStories.map(async (story) => {
       const { data: pages } = await supabase.from("story_pages").select("content").eq("story_id", story.id);
       return pages?.map((page: { content: string }) => page.content).join(" ") ?? story.excerpt ?? "";
     }));
     setStories(
-      loaded.map((story, index) => {
+      accessibleStories.map((story, index) => {
         const profile = Array.isArray(story.profiles) ? story.profiles[0] : story.profiles;
         return {
         id: story.id,
@@ -924,7 +938,7 @@ export default function HomePage() {
     const excerpt = storyDescription.trim().slice(0, 240);
     const category = selectedGenres.join(", ") || "Personal essay";
     if (editingStoryId) {
-      const { error } = await supabase.from("stories").update({ title: storyTitle.trim(), excerpt, category, visibility: storyVisibility, updated_at: new Date().toISOString() }).eq("id", editingStoryId).eq("author_id", user.id);
+      const { error } = await supabase.from("stories").update({ title: storyTitle.trim(), excerpt, category, visibility: storyVisibility, premium_until: storyPremiumUntil ? new Date(storyPremiumUntil).toISOString() : null, updated_at: new Date().toISOString() }).eq("id", editingStoryId).eq("author_id", user.id);
       if (error) { notify(error.message); return; }
       await supabase.from("story_pages").delete().eq("story_id", editingStoryId);
       const { error: pageError } = await supabase.from("story_pages").insert(pages.map((content, index) => ({ story_id: editingStoryId, page_number: index + 1, content })));
@@ -939,6 +953,7 @@ export default function HomePage() {
         excerpt,
         category,
         visibility: storyVisibility,
+        premium_until: storyPremiumUntil ? new Date(storyPremiumUntil).toISOString() : null,
         status: "published",
         published_at: new Date().toISOString(),
       })
@@ -966,6 +981,7 @@ export default function HomePage() {
     setStoryDescription("");
     setSelectedGenres([]);
     setStoryVisibility("public");
+    setStoryPremiumUntil("");
     setPages([""]);
     setActivePage(0);
     await loadStories();
@@ -1192,7 +1208,7 @@ export default function HomePage() {
             onWrite={() => { setEditingStoryId(null); setView("Write"); }}
             onEdit={async (storyId) => {
             const [{ data: story }, { data: pageRows }] = await Promise.all([
-              supabase.from("stories").select("id,title,excerpt,category,visibility").eq("id", storyId).single(),
+              supabase.from("stories").select("id,title,excerpt,category,visibility,premium_until").eq("id", storyId).single(),
               supabase.from("story_pages").select("page_number,content").eq("story_id", storyId).order("page_number"),
             ]);
             if (!story) { notify("That story could not be found"); return; }
@@ -1224,6 +1240,8 @@ export default function HomePage() {
             setSelectedGenres={setSelectedGenres}
             storyVisibility={storyVisibility}
             setStoryVisibility={setStoryVisibility}
+            storyPremiumUntil={storyPremiumUntil}
+            setStoryPremiumUntil={setStoryPremiumUntil}
             pages={pages}
             activePage={activePage}
             setActivePage={setActivePage}
@@ -2508,6 +2526,8 @@ type AdminUser = {
   bio: string | null;
   avatar_url: string | null;
   created_at: string;
+  is_premium?: boolean;
+  premium_until?: string | null;
 };
 
 function SiteSettingsPanel() {
@@ -2553,6 +2573,20 @@ function AdminUserPanel() {
 
   const load = async () => { const response = await fetch("/api/admin"); const body = await response.json(); if (!response.ok) setError(body.error ?? "Could not load admin data"); else setData(body); };
 
+  const updatePremium = async (isPremium: boolean, premiumUntil?: string | null) => {
+    if (!editingUser) return;
+    setSaving(true);
+    const response = await fetch("/api/admin", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "premium-profile", id: editingUser.id, is_premium: isPremium, premium_until: premiumUntil }),
+    });
+    const body = await response.json();
+    setSaving(false);
+    if (!response.ok) setError(body.error ?? "Premium update failed");
+    else await load();
+  };
+
   const updateUser = async () => {
     if (!editingUser) return;
     setSaving(true);
@@ -2584,7 +2618,7 @@ function AdminUserPanel() {
     return story.author_id === selectedUserId || relatedProfile?.id === selectedUserId;
   }) ?? [];
 
-  return <section className="content-wrap admin-wrap"><p className="eyebrow"><BarChart3 size={14} /> Private admin</p><h1>Manage the <em>reading room.</em></h1><p className="subtitle">Users and all stories, including private ones, are visible only to the approved admin account.</p>{error ? <p className="profile-error">{error}. Add SUPABASE_SERVICE_ROLE_KEY to Vercel if needed.</p> : !data ? <p className="subtitle">Loading admin data...</p> : <div className="admin-grid"><div className="analytics-card"><span className="section-kicker">People</span><h2>{data.users.length} users</h2><div className="admin-user-list">{data.users.map((person) => <button type="button" className={`admin-user-card ${selectedUserId === person.id ? "selected" : ""}`} key={person.id} onClick={() => setSelectedUserId(person.id)}><span className="avatar avatar-plum">{person.display_name.slice(0, 2).toUpperCase()}</span><span><strong>{person.display_name}</strong><small>@{person.username}</small></span><span className="admin-user-meta">Joined {new Date(person.created_at).toLocaleDateString()}</span></button>)}</div></div><div className="analytics-card admin-editor-panel">{editingUser ? <><span className="section-kicker">Profile editor</span><h2>{editingUser.display_name}</h2><div className="admin-editor-form"><div className="admin-avatar-preview">{editingUser.avatar_url ? <img src={editingUser.avatar_url} alt="" /> : <span>{editingUser.display_name.slice(0, 2).toUpperCase()}</span>}</div><label>Display name<input value={editingUser.display_name} onChange={(event) => setEditingUser({ ...editingUser, display_name: event.target.value })} /></label><label>Username<input value={editingUser.username} onChange={(event) => setEditingUser({ ...editingUser, username: event.target.value.replace(/[^a-zA-Z0-9_]/g, "") })} /></label><label>Avatar URL<input value={editingUser.avatar_url ?? ""} onChange={(event) => setEditingUser({ ...editingUser, avatar_url: event.target.value || null })} placeholder="https://..." /></label><label>Bio<textarea value={editingUser.bio ?? ""} onChange={(event) => setEditingUser({ ...editingUser, bio: event.target.value })} /></label><div className="admin-editor-actions"><button className="delete-button" onClick={() => remove("profile", editingUser.id, editingUser.display_name)}><X size={14} /> Delete user</button><button className="primary-button" onClick={() => void updateUser()} disabled={saving}>{saving ? "Saving..." : "Save changes"}</button></div></div><div className="admin-story-panel"><span className="section-kicker">Stories</span><div className="admin-story-scroll">{selectedStories.length ? selectedStories.map((story) => <div className="admin-story-item" key={story.id}><div><strong>{story.title}</strong><small>{story.visibility} · {story.status}</small></div><button className="delete-button" onClick={() => remove("story", story.id, story.title)}><X size={14} /></button></div>) : <p className="subtitle">No stories for this user yet.</p>}</div></div></> : <p className="subtitle">Select a user to edit.</p>}</div></div>}</section>;
+  return <section className="content-wrap admin-wrap"><p className="eyebrow"><BarChart3 size={14} /> Private admin</p><h1>Manage the <em>reading room.</em></h1><p className="subtitle">Users and all stories, including private ones, are visible only to the approved admin account.</p>{error ? <p className="profile-error">{error}. Add SUPABASE_SERVICE_ROLE_KEY to Vercel if needed.</p> : !data ? <p className="subtitle">Loading admin data...</p> : <div className="admin-grid"><div className="analytics-card"><span className="section-kicker">People</span><h2>{data.users.length} users</h2><div className="admin-user-list">{data.users.map((person) => <button type="button" className={`admin-user-card ${selectedUserId === person.id ? "selected" : ""}`} key={person.id} onClick={() => setSelectedUserId(person.id)}><span className="avatar avatar-plum">{person.display_name.slice(0, 2).toUpperCase()}</span><span><strong>{person.display_name}</strong><small>@{person.username}</small></span><span className="admin-user-meta">Joined {new Date(person.created_at).toLocaleDateString()}</span></button>)}</div></div><div className="analytics-card admin-editor-panel">{editingUser ? <><span className="section-kicker">Profile editor</span><h2>{editingUser.display_name}</h2><div className="admin-editor-form"><div className="admin-avatar-preview">{editingUser.avatar_url ? <img src={editingUser.avatar_url} alt="" /> : <span>{editingUser.display_name.slice(0, 2).toUpperCase()}</span>}</div><label>Display name<input value={editingUser.display_name} onChange={(event) => setEditingUser({ ...editingUser, display_name: event.target.value })} /></label><label>Username<input value={editingUser.username} onChange={(event) => setEditingUser({ ...editingUser, username: event.target.value.replace(/[^a-zA-Z0-9_]/g, "") })} /></label><label>Avatar URL<input value={editingUser.avatar_url ?? ""} onChange={(event) => setEditingUser({ ...editingUser, avatar_url: event.target.value || null })} placeholder="https://..." /></label><label>Bio<textarea value={editingUser.bio ?? ""} onChange={(event) => setEditingUser({ ...editingUser, bio: event.target.value })} /></label><label className="admin-premium-toggle"><input type="checkbox" checked={editingUser.is_premium ?? false} onChange={(event) => setEditingUser({ ...editingUser, is_premium: event.target.checked })} /> Premium member</label><label>Premium until<input type="datetime-local" value={editingUser.premium_until ? new Date(editingUser.premium_until).toISOString().slice(0, 16) : ""} onChange={(event) => setEditingUser({ ...editingUser, premium_until: event.target.value ? new Date(event.target.value).toISOString() : null })} /></label><button className="quiet-button" type="button" onClick={() => void updatePremium(editingUser.is_premium ?? false, editingUser.premium_until)} disabled={saving}>Save premium access</button><div className="admin-editor-actions"><button className="delete-button" onClick={() => remove("profile", editingUser.id, editingUser.display_name)}><X size={14} /> Delete user</button><button className="primary-button" onClick={() => void updateUser()} disabled={saving}>{saving ? "Saving..." : "Save changes"}</button></div></div><div className="admin-story-panel"><span className="section-kicker">Stories</span><div className="admin-story-scroll">{selectedStories.length ? selectedStories.map((story) => <div className="admin-story-item" key={story.id}><div><strong>{story.title}</strong><small>{story.visibility} · {story.status}</small></div><button className="delete-button" onClick={() => remove("story", story.id, story.title)}><X size={14} /></button></div>) : <p className="subtitle">No stories for this user yet.</p>}</div></div></> : <p className="subtitle">Select a user to edit.</p>}</div></div>}</section>;
 }
 
 function PinningPanel() {
@@ -3349,6 +3383,8 @@ function Writer({
   setSelectedGenres,
   storyVisibility,
   setStoryVisibility,
+  storyPremiumUntil,
+  setStoryPremiumUntil,
   pages,
   activePage,
   setActivePage,
@@ -3369,6 +3405,8 @@ function Writer({
   setSelectedGenres: (genres: string[]) => void;
   storyVisibility: "public" | "followers" | "private";
   setStoryVisibility: (value: "public" | "followers" | "private") => void;
+  storyPremiumUntil: string;
+  setStoryPremiumUntil: (value: string) => void;
   pages: string[];
   activePage: number;
   setActivePage: (page: number) => void;
@@ -3690,6 +3728,10 @@ function Writer({
               <option value="followers">Followers only</option>
               <option value="private">Only me</option>
             </select>
+          </label>
+          <label>
+            Premium access until
+            <input type="datetime-local" value={storyPremiumUntil} onChange={(event) => setStoryPremiumUntil(event.target.value)} />
           </label>
           <div className="story-tip">
             <Coffee size={17} />

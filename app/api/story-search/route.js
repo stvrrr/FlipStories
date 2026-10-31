@@ -83,6 +83,7 @@ export async function GET(request) {
       .select("id,title")
       .eq("status", "published")
       .eq("visibility", "public")
+      .or("premium_until.is.null,premium_until.lte.now()")
       .order("id", { ascending: true })
       .range(offset, offset + pageSize - 1);
 
@@ -110,6 +111,7 @@ export async function GET(request) {
     .eq("id", bestMatch.id)
     .eq("status", "published")
     .eq("visibility", "public")
+    .or("premium_until.is.null,premium_until.lte.now()")
     .maybeSingle();
 
   if (error || !story) {
