@@ -584,7 +584,6 @@ export default function HomePage() {
   const [storyDescription, setStoryDescription] = useState("");
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [storyVisibility, setStoryVisibility] = useState<"public" | "followers" | "private">("public");
-  const [storyPremiumUntil, setStoryPremiumUntil] = useState<string>("");
   const [editingStoryId, setEditingStoryId] = useState<string | null>(null);
   const [publicProfileUsername, setPublicProfileUsername] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -680,7 +679,7 @@ export default function HomePage() {
     setFollowingPeople(people);
   };
   const loadStories = async () => {
-    const storySelect = "id,title,excerpt,category,created_at,author_id,is_pinned,pin_label,premium_until,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)";
+    const storySelect = "id,title,excerpt,category,created_at,author_id,is_pinned,pin_label,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)";
     let { data, error } = await supabase
       .from("stories")
       .select(storySelect)
@@ -690,7 +689,7 @@ export default function HomePage() {
     if (error) {
       ({ data } = await supabase
         .from("stories")
-        .select("id,title,excerpt,category,created_at,author_id,premium_until,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)")
+        .select("id,title,excerpt,category,created_at,author_id,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)")
         .eq("status", "published")
         .eq("visibility", "public")
         .order("published_at", { ascending: false }));
@@ -704,7 +703,6 @@ export default function HomePage() {
       created_at: string;
       is_pinned?: boolean;
       pin_label?: string | null;
-      premium_until: string | null;
       profiles: { username: string; display_name: string; avatar_url: string | null } | { username: string; display_name: string; avatar_url: string | null }[] | null;
       likes: Array<{ count: number }>;
     }>;
@@ -721,24 +719,12 @@ export default function HomePage() {
         Number(row.like_count),
       ] as const),
     );
-    const { data: { user: currentUser } } = await supabase.auth.getUser();
-    let hasPremiumAccess = false;
-    if (currentUser) {
-      const { data: premiumProfile } = await supabase
-        .from("profiles")
-        .select("is_premium,premium_until")
-        .eq("id", currentUser.id)
-        .maybeSingle();
-      hasPremiumAccess = Boolean(premiumProfile?.is_premium && (!premiumProfile.premium_until || new Date(premiumProfile.premium_until).getTime() > Date.now()));
-    }
-    const now = Date.now();
-    const accessibleStories = loaded.filter((story) => !story.premium_until || new Date(story.premium_until).getTime() <= now || hasPremiumAccess);
-    const pageContent = await Promise.all(accessibleStories.map(async (story) => {
+    const pageContent = await Promise.all(loaded.map(async (story) => {
       const { data: pages } = await supabase.from("story_pages").select("content").eq("story_id", story.id);
       return pages?.map((page: { content: string }) => page.content).join(" ") ?? story.excerpt ?? "";
     }));
     setStories(
-      accessibleStories.map((story, index) => {
+      loaded.map((story, index) => {
         const profile = Array.isArray(story.profiles) ? story.profiles[0] : story.profiles;
         return {
         id: story.id,
@@ -938,7 +924,7 @@ export default function HomePage() {
     const excerpt = storyDescription.trim().slice(0, 240);
     const category = selectedGenres.join(", ") || "Personal essay";
     if (editingStoryId) {
-      const { error } = await supabase.from("stories").update({ title: storyTitle.trim(), excerpt, category, visibility: storyVisibility, premium_until: storyPremiumUntil ? new Date(storyPremiumUntil).toISOString() : null, updated_at: new Date().toISOString() }).eq("id", editingStoryId).eq("author_id", user.id);
+      const { error } = await supabase.from("stories").update({ title: storyTitle.trim(), excerpt, category, visibility: storyVisibility, updated_at: new Date().toISOString() }).eq("id", editingStoryId).eq("author_id", user.id);
       if (error) { notify(error.message); return; }
       await supabase.from("story_pages").delete().eq("story_id", editingStoryId);
       const { error: pageError } = await supabase.from("story_pages").insert(pages.map((content, index) => ({ story_id: editingStoryId, page_number: index + 1, content })));
@@ -953,7 +939,6 @@ export default function HomePage() {
         excerpt,
         category,
         visibility: storyVisibility,
-        premium_until: storyPremiumUntil ? new Date(storyPremiumUntil).toISOString() : null,
         status: "published",
         published_at: new Date().toISOString(),
       })
@@ -981,7 +966,6 @@ export default function HomePage() {
     setStoryDescription("");
     setSelectedGenres([]);
     setStoryVisibility("public");
-    setStoryPremiumUntil("");
     setPages([""]);
     setActivePage(0);
     await loadStories();
@@ -1208,7 +1192,7 @@ export default function HomePage() {
             onWrite={() => { setEditingStoryId(null); setView("Write"); }}
             onEdit={async (storyId) => {
             const [{ data: story }, { data: pageRows }] = await Promise.all([
-              supabase.from("stories").select("id,title,excerpt,category,visibility,premium_until").eq("id", storyId).single(),
+              supabase.from("stories").select("id,title,excerpt,category,visibility").eq("id", storyId).single(),
               supabase.from("story_pages").select("page_number,content").eq("story_id", storyId).order("page_number"),
             ]);
             if (!story) { notify("That story could not be found"); return; }
@@ -1240,8 +1224,6 @@ export default function HomePage() {
             setSelectedGenres={setSelectedGenres}
             storyVisibility={storyVisibility}
             setStoryVisibility={setStoryVisibility}
-            storyPremiumUntil={storyPremiumUntil}
-            setStoryPremiumUntil={setStoryPremiumUntil}
             pages={pages}
             activePage={activePage}
             setActivePage={setActivePage}
@@ -3383,8 +3365,6 @@ function Writer({
   setSelectedGenres,
   storyVisibility,
   setStoryVisibility,
-  storyPremiumUntil,
-  setStoryPremiumUntil,
   pages,
   activePage,
   setActivePage,
@@ -3405,8 +3385,6 @@ function Writer({
   setSelectedGenres: (genres: string[]) => void;
   storyVisibility: "public" | "followers" | "private";
   setStoryVisibility: (value: "public" | "followers" | "private") => void;
-  storyPremiumUntil: string;
-  setStoryPremiumUntil: (value: string) => void;
   pages: string[];
   activePage: number;
   setActivePage: (page: number) => void;
@@ -3728,10 +3706,6 @@ function Writer({
               <option value="followers">Followers only</option>
               <option value="private">Only me</option>
             </select>
-          </label>
-          <label>
-            Premium access until
-            <input type="datetime-local" value={storyPremiumUntil} onChange={(event) => setStoryPremiumUntil(event.target.value)} />
           </label>
           <div className="story-tip">
             <Coffee size={17} />

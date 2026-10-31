@@ -18,7 +18,6 @@ export async function GET(request) {
     .select("id,title,excerpt,category,created_at,author_id,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)")
     .eq("status", "published")
     .eq("visibility", "public")
-    .or("premium_until.is.null,premium_until.lte.now()")
     .is("discord_posted_at", null)
     .order("published_at", { ascending: true })
     .limit(1)
