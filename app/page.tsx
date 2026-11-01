@@ -2,6 +2,7 @@
 
 import {
   BarChart3,
+  BadgeCheck,
   Bell,
   BookOpen,
   Bookmark,
@@ -9,6 +10,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CalendarDays,
   Coffee,
   Heart,
   Home,
@@ -22,6 +24,7 @@ import {
   PenLine,
   Pin,
   Plus,
+  RefreshCw,
   Search,
   Send,
   Settings2,
@@ -30,6 +33,7 @@ import {
   Star,
   Sun,
   Trash2,
+  Trophy,
   Users,
   X,
 } from "lucide-react";
@@ -54,8 +58,37 @@ type Story = {
   avatarUrl: string;
   isPinned?: boolean;
   pinLabel?: string | null;
+  coAuthors?: Array<{ id: string; username: string; display_name: string }>;
+  isCoWritten?: boolean;
 };
-type Profile = { id?: string; username: string; display_name: string; bio: string; avatar_url: string; profile_links: string[] };
+type Profile = { id?: string; username: string; display_name: string; bio: string; avatar_url: string; profile_links: string[]; badges?: string[] };
+type BadgeKey = "early_member" | "story_seeker" | "century_story" | "community_favorite" | "premium_member" | "event_participant" | "hitmaker" | "collaborative_spark";
+const BADGE_PRESENTATION: Record<BadgeKey, { label: string; detail: string; icon: typeof BadgeCheck }> = {
+  early_member: { label: "Early Member", detail: "Here from the beginning", icon: BadgeCheck },
+  story_seeker: { label: "Story Seeker", detail: "Read 50 different stories", icon: BookOpen },
+  century_story: { label: "Century Story", detail: "A story reached 100 likes", icon: Heart },
+  community_favorite: { label: "Community Favorite", detail: "Reached 25 followers", icon: Users },
+  premium_member: { label: "Premium Member", detail: "Active Premium membership", icon: Sparkles },
+  event_participant: { label: "Event Participant", detail: "Joined a community event", icon: CalendarDays },
+  hitmaker: { label: "Hitmaker", detail: "Five stories passed 100 likes", icon: Trophy },
+  collaborative_spark: { label: "Collaborative Spark", detail: "Three co-written stories reached 20 likes", icon: PenLine },
+};
+
+function ProfileBadges({ badges, compact = false }: { badges?: string[]; compact?: boolean }) {
+  const earnedBadges = (badges ?? []).filter((badge): badge is BadgeKey => badge in BADGE_PRESENTATION);
+  if (!earnedBadges.length) return null;
+  return (
+    <section className={`profile-badges ${compact ? "profile-badges-compact" : ""}`} aria-label="Profile badges">
+      {!compact && <div className="profile-badges-heading"><span className="section-kicker">Community badges</span><span>{earnedBadges.length}</span></div>}
+      <div className="profile-badges-list">
+        {earnedBadges.map((badge) => {
+          const { label, detail, icon: Icon } = BADGE_PRESENTATION[badge];
+          return <span className={`profile-badge profile-badge-${badge}`} key={badge} title={detail}><Icon size={15} /><span>{label}</span></span>;
+        })}
+      </div>
+    </section>
+  );
+}
 type Language = "en" | "es" | "fr" | "de" | "pt" | "it" | "ja" | "ko" | "zh" | "ar";
 type NotificationKind = "like" | "favorite" | "comment" | "follow";
 type NotificationItem = {
@@ -583,6 +616,7 @@ export default function HomePage() {
   const [storyTitle, setStoryTitle] = useState("");
   const [storyDescription, setStoryDescription] = useState("");
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+  const [selectedCoWriterIds, setSelectedCoWriterIds] = useState<string[]>([]);
   const [storyVisibility, setStoryVisibility] = useState<"public" | "followers" | "private">("public");
   const [editingStoryId, setEditingStoryId] = useState<string | null>(null);
   const [publicProfileUsername, setPublicProfileUsername] = useState<string | null>(null);
@@ -706,6 +740,15 @@ export default function HomePage() {
       profiles: { username: string; display_name: string; avatar_url: string | null } | { username: string; display_name: string; avatar_url: string | null }[] | null;
       likes: Array<{ count: number }>;
     }>;
+    const storyIds = loaded.map((story) => story.id);
+    const { data: coauthorRows } = storyIds.length
+      ? await supabase.from("story_coauthors").select("story_id,profiles!story_coauthors_profile_id_fkey(id,username,display_name)").in("story_id", storyIds)
+      : { data: [] };
+    const coauthorsByStoryId = new Map<string, Array<{ id: string; username: string; display_name: string }>>();
+    (coauthorRows ?? []).forEach((row: { story_id: string; profiles?: { id: string; username: string; display_name: string } | { id: string; username: string; display_name: string }[] | null }) => {
+      const coauthor = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+      if (coauthor) coauthorsByStoryId.set(row.story_id, [...(coauthorsByStoryId.get(row.story_id) ?? []), coauthor]);
+    });
     const { data: likeCounts, error: likeCountsError } = await supabase.rpc(
       "get_public_story_like_counts",
       { p_story_ids: loaded.map((story) => story.id) },
@@ -745,6 +788,7 @@ export default function HomePage() {
         avatarUrl: profile?.avatar_url ?? "",
         isPinned: story.is_pinned ?? false,
         pinLabel: story.is_pinned ? story.pin_label : null,
+        coAuthors: coauthorsByStoryId.get(story.id) ?? [],
         };
       }),
     );
@@ -781,6 +825,21 @@ export default function HomePage() {
   const notify = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
+  };
+  const startNewStory = () => {
+    setEditingStoryId(null);
+    setStoryTitle("");
+    setStoryDescription("");
+    setSelectedGenres([]);
+    setSelectedCoWriterIds([]);
+    setStoryVisibility("public");
+    setPages([""]);
+    setActivePage(0);
+    setView("Write");
+  };
+  const navigateToView = (nextView: string) => {
+    if (nextView === "Write") startNewStory();
+    else setView(nextView);
   };
   const handleAuth = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -929,7 +988,9 @@ export default function HomePage() {
       await supabase.from("story_pages").delete().eq("story_id", editingStoryId);
       const { error: pageError } = await supabase.from("story_pages").insert(pages.map((content, index) => ({ story_id: editingStoryId, page_number: index + 1, content })));
       if (pageError) { notify(pageError.message); return; }
-      setEditingStoryId(null); setStoryTitle(""); setStoryDescription(""); setSelectedGenres([]); setStoryVisibility("public"); setPages([""]); setActivePage(0); await loadStories(); setView("Shelf"); notify("Your story was updated"); return;
+      const { error: coauthorError } = await supabase.rpc("set_story_coauthors", { p_story_id: editingStoryId, p_profile_ids: selectedCoWriterIds });
+      if (coauthorError) { notify(coauthorError.message); return; }
+      setEditingStoryId(null); setStoryTitle(""); setStoryDescription(""); setSelectedGenres([]); setSelectedCoWriterIds([]); setStoryVisibility("public"); setPages([""]); setActivePage(0); await loadStories(); setView("Shelf"); notify("Your story was updated"); return;
     }
     const { data: story, error } = await supabase
       .from("stories")
@@ -962,9 +1023,18 @@ export default function HomePage() {
       notify(pagesError.message);
       return;
     }
+    if (selectedCoWriterIds.length) {
+      const { error: coauthorError } = await supabase.rpc("set_story_coauthors", { p_story_id: story.id, p_profile_ids: selectedCoWriterIds });
+      if (coauthorError) {
+        await supabase.from("stories").delete().eq("id", story.id);
+        notify(coauthorError.message);
+        return;
+      }
+    }
     setStoryTitle("");
     setStoryDescription("");
     setSelectedGenres([]);
+    setSelectedCoWriterIds([]);
     setStoryVisibility("public");
     setPages([""]);
     setActivePage(0);
@@ -1030,7 +1100,7 @@ export default function HomePage() {
           <button
             className={`nav-item ${view === "Write" ? "active" : ""}`}
             onClick={() => {
-              setView("Write");
+              startNewStory();
               setMenuOpen(false);
             }}
           >
@@ -1118,7 +1188,7 @@ export default function HomePage() {
         </header>
         {view === "Discover" && (
           <Discover
-            setView={setView}
+            setView={navigateToView}
             setReadingStory={setReadingStory}
             stories={stories}
             liked={liked}
@@ -1142,7 +1212,7 @@ export default function HomePage() {
         )}
         {view === "Following" && (
           <FollowingView
-            setView={setView}
+            setView={navigateToView}
             user={user}
             followingPeople={followingPeople}
             stories={stories.filter((story) =>
@@ -1159,7 +1229,7 @@ export default function HomePage() {
           />
         )}
         {view === "Dashboard" && (
-          <Dashboard onWrite={() => setView("Write")} user={user} />
+          <Dashboard onWrite={startNewStory} user={user} />
         )}
         {view === "Settings" && <SettingsView user={user} theme={theme} setTheme={setTheme} mobileNavigation={mobileNavigation} setMobileNavigation={setMobileNavigation} language={language} setLanguage={setLanguage} notificationKinds={notificationKinds} setNotificationKinds={setNotificationKinds} onSignOut={handleSignOut} onDeleted={handleAccountDeleted} onSaved={async () => { await loadStories(); setView("Discover"); }} />}
         {view === "PublicProfile" && publicProfileUsername && (
@@ -1189,17 +1259,19 @@ export default function HomePage() {
             onFollow={toggleFollow}
             onRead={setReadingStory}
             onAuthor={(username) => { setPublicProfileUsername(username); setView("PublicProfile"); }}
-            onWrite={() => { setEditingStoryId(null); setView("Write"); }}
+            onWrite={startNewStory}
             onEdit={async (storyId) => {
-            const [{ data: story }, { data: pageRows }] = await Promise.all([
+            const [{ data: story }, { data: pageRows }, { data: coauthorRows }] = await Promise.all([
               supabase.from("stories").select("id,title,excerpt,category,visibility").eq("id", storyId).single(),
               supabase.from("story_pages").select("page_number,content").eq("story_id", storyId).order("page_number"),
+              supabase.from("story_coauthors").select("profile_id").eq("story_id", storyId),
             ]);
             if (!story) { notify("That story could not be found"); return; }
             setEditingStoryId(story.id);
             setStoryTitle(story.title);
             setStoryDescription(story.excerpt ?? "");
             setSelectedGenres(story.category ? story.category.split(", ").filter((genre: string) => GENRES.includes(genre)).slice(0, 3) : []);
+            setSelectedCoWriterIds((coauthorRows ?? []).map((row: { profile_id: string }) => row.profile_id));
             setStoryVisibility(story.visibility ?? "public");
             setPages(pageRows?.map((page: { content: string }) => page.content) ?? [""]);
             setActivePage(0);
@@ -1222,6 +1294,8 @@ export default function HomePage() {
             setStoryDescription={setStoryDescription}
             selectedGenres={selectedGenres}
             setSelectedGenres={setSelectedGenres}
+            selectedCoWriterIds={selectedCoWriterIds}
+            setSelectedCoWriterIds={setSelectedCoWriterIds}
             storyVisibility={storyVisibility}
             setStoryVisibility={setStoryVisibility}
             pages={pages}
@@ -1253,7 +1327,7 @@ export default function HomePage() {
               key={label}
               className={view === targetView ? "active" : ""}
               aria-current={view === targetView ? "page" : undefined}
-              onClick={() => { setView(targetView); setMenuOpen(false); }}
+              onClick={() => { if (targetView === "Write") startNewStory(); else setView(targetView); setMenuOpen(false); }}
             >
               <Icon size={18} />
               <span>{t(label)}</span>
@@ -1776,6 +1850,7 @@ function StoryCard({
               <small>{following ? "Following" : `@${story.handle}`}</small>
             </span>
           </button>
+          {story.coAuthors?.length ? <span className="story-coauthor-line">with {story.coAuthors.map((coauthor) => `@${coauthor.username}`).join(", ")}</span> : null}
           <button
             className={`follow-chip ${following ? "following" : ""}`}
             onClick={(event) => { event.stopPropagation(); onFollow(); }}
@@ -2337,17 +2412,37 @@ function PublicProfile({
     const load = async () => {
       const { data: profileRow } = await supabase.from("profiles").select("id,username,display_name,bio,avatar_url,profile_links").eq("username", username).maybeSingle();
       if (!profileRow) return;
+      const { data: badgeRows } = await supabase.rpc("get_profile_badges", { p_profile_id: profileRow.id });
       setProfile({
         ...profileRow,
         bio: profileRow.bio ?? "",
         avatar_url: profileRow.avatar_url ?? "",
         profile_links: normalizeProfileLinks(profileRow.profile_links ?? []),
+        badges: (badgeRows ?? []).map((row: { badge_key: string }) => row.badge_key),
       } as Profile);
-      const { data } = await supabase.from("stories").select("id,title,excerpt,category,created_at,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)").eq("author_id", profileRow.id).eq("status", "published").eq("visibility", "public").order("published_at", { ascending: false });
-      const profileStories = data ?? [];
+      const [authoredResult, coauthorRefsResult] = await Promise.all([
+        supabase.from("stories").select("id,title,excerpt,category,created_at,published_at,author_id,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)").eq("author_id", profileRow.id).eq("status", "published").eq("visibility", "public"),
+        supabase.from("story_coauthors").select("story_id").eq("profile_id", profileRow.id),
+      ]);
+      const authoredStories = authoredResult.data ?? [];
+      const authoredIds = new Set(authoredStories.map((story: { id: string }) => story.id));
+      const coauthoredStoryIds = [...new Set((coauthorRefsResult.data ?? []).map((row: { story_id: string }) => row.story_id))].filter((id) => !authoredIds.has(id));
+      const { data: coauthoredStories } = coauthoredStoryIds.length
+        ? await supabase.from("stories").select("id,title,excerpt,category,created_at,published_at,author_id,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)").in("id", coauthoredStoryIds).eq("status", "published").eq("visibility", "public")
+        : { data: [] };
+      const profileStories = [...authoredStories, ...(coauthoredStories ?? [])].sort((left: { published_at?: string | null; created_at: string }, right: { published_at?: string | null; created_at: string }) => new Date(right.published_at ?? right.created_at).getTime() - new Date(left.published_at ?? left.created_at).getTime());
+      const storyIds = profileStories.map((story: { id: string }) => story.id);
+      const { data: coauthorRows } = storyIds.length
+        ? await supabase.from("story_coauthors").select("story_id,profiles!story_coauthors_profile_id_fkey(id,username,display_name)").in("story_id", storyIds)
+        : { data: [] };
+      const coauthorsByStoryId = new Map<string, Array<{ id: string; username: string; display_name: string }>>();
+      (coauthorRows ?? []).forEach((row: { story_id: string; profiles?: { id: string; username: string; display_name: string } | { id: string; username: string; display_name: string }[] | null }) => {
+        const coauthor = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+        if (coauthor) coauthorsByStoryId.set(row.story_id, [...(coauthorsByStoryId.get(row.story_id) ?? []), coauthor]);
+      });
       const { data: likeCounts, error: likeCountsError } = await supabase.rpc(
         "get_public_story_like_counts",
-        { p_story_ids: profileStories.map((story: { id: string }) => story.id) },
+        { p_story_ids: storyIds },
       );
       if (likeCountsError) {
         console.error("Could not load profile story like counts.", likeCountsError);
@@ -2358,13 +2453,34 @@ function PublicProfile({
           Number(row.like_count),
         ] as const),
       );
-      setStories(profileStories.map((story: any, index: number) => ({ id: story.id, authorId: profileRow.id, title: story.title, excerpt: story.excerpt ?? "", author: profileRow.display_name, handle: profileRow.username, initials: profileRow.display_name.slice(0, 2).toUpperCase(), category: story.category ?? "Personal essays", readTime: "5 min read", date: new Date(story.created_at).toLocaleDateString(), createdAt: story.created_at, accent: ["sage", "terracotta", "mustard"][index % 3], likes: likeCountByStoryId.get(story.id) ?? story.likes?.[0]?.count ?? 0, avatarUrl: profileRow.avatar_url ?? "" })));
+      setStories(profileStories.map((story: any, index: number) => {
+        const author = Array.isArray(story.profiles) ? story.profiles[0] : story.profiles;
+        return { id: story.id, authorId: story.author_id, title: story.title, excerpt: story.excerpt ?? "", author: author?.display_name ?? "Anonymous writer", handle: author?.username ?? "writer", initials: (author?.display_name ?? "AW").slice(0, 2).toUpperCase(), category: story.category ?? "Personal essays", readTime: "5 min read", date: new Date(story.created_at).toLocaleDateString(), createdAt: story.created_at, accent: ["sage", "terracotta", "mustard"][index % 3], likes: likeCountByStoryId.get(story.id) ?? story.likes?.[0]?.count ?? 0, avatarUrl: author?.avatar_url ?? "", coAuthors: coauthorsByStoryId.get(story.id) ?? [], isCoWritten: story.author_id !== profileRow.id };
+      }));
       await loadFollowCounts(profileRow.id);
     };
     void load();
   }, [username, user]);
   if (!profile) return <section className="content-wrap empty-feed"><button className="text-button" onClick={onBack}><ChevronLeft size={15} /> Back</button><h1>Profile not found.</h1></section>;
-  return <section className="content-wrap public-profile-wrap"><button className="text-button" onClick={onBack}><ChevronLeft size={15} /> Back to Discover</button><div className="public-profile-header">{profile.avatar_url ? <img className="public-avatar" src={profile.avatar_url} alt="" /> : <div className="avatar avatar-plum avatar-large">{profile.display_name.slice(0, 2).toUpperCase()}</div>}<div><h1>{profile.display_name}</h1><p>@{profile.username}</p>{profile.bio && <span>{profile.bio}</span>}{profile.profile_links.length ? <div className="profile-link-list">{profile.profile_links.map((link) => { const hostname = new URL(link).hostname.replace(/^www\./, ""); return <a key={link} className="profile-link" href={link} target="_blank" rel="noreferrer noopener">{hostname}</a>; })}</div> : null}</div>{user?.id !== profile.id ? <button className="primary-button" onClick={() => void toggleProfileFollow()} disabled={loadingFollow}>{loadingFollow ? "Updating..." : isFollowing ? "Following" : "Follow"}</button> : null}</div><FollowDirectory user={user} profileId={profile.id} counts={followCounts} onAuthor={onAuthor} /><div className="section-heading"><div><span className="section-kicker">Published stories</span><h2>From {profile.display_name}</h2></div></div>{stories.length ? <div className="story-list">{stories.map((story) => <StoryCard key={story.id} story={story} liked={false} saved={false} following={isFollowing} onLike={() => {}} onSave={() => {}} onFollow={() => void toggleProfileFollow()} onRead={() => onRead(story)} onAuthor={() => {}} onMention={onAuthor} />)}</div> : <p className="subtitle">No public stories yet.</p>}</section>;
+  return (
+    <section className="content-wrap public-profile-wrap">
+      <button className="text-button" onClick={onBack}><ChevronLeft size={15} /> Back to Discover</button>
+      <div className="public-profile-header">
+        {profile.avatar_url ? <img className="public-avatar" src={profile.avatar_url} alt="" /> : <div className="avatar avatar-plum avatar-large">{profile.display_name.slice(0, 2).toUpperCase()}</div>}
+        <div>
+          <h1>{profile.display_name}</h1>
+          <p>@{profile.username}</p>
+          {profile.bio && <span>{profile.bio}</span>}
+          {profile.profile_links.length ? <div className="profile-link-list">{profile.profile_links.map((link) => { const hostname = new URL(link).hostname.replace(/^www\./, ""); return <a key={link} className="profile-link" href={link} target="_blank" rel="noreferrer noopener">{hostname}</a>; })}</div> : null}
+        </div>
+        {user?.id !== profile.id ? <button className="primary-button" onClick={() => void toggleProfileFollow()} disabled={loadingFollow}>{loadingFollow ? "Updating..." : isFollowing ? "Following" : "Follow"}</button> : null}
+      </div>
+      <ProfileBadges badges={profile.badges} />
+      <FollowDirectory user={user} profileId={profile.id} counts={followCounts} onAuthor={onAuthor} />
+      <div className="section-heading"><div><span className="section-kicker">Published stories</span><h2>From {profile.display_name}</h2></div></div>
+      {stories.length ? <div className="story-list">{stories.map((story) => <StoryCard key={story.id} story={story} liked={false} saved={false} following={isFollowing} onLike={() => {}} onSave={() => {}} onFollow={() => void toggleProfileFollow()} onRead={() => onRead(story)} onAuthor={() => {}} onMention={onAuthor} />)}</div> : <p className="subtitle">No public stories yet.</p>}
+    </section>
+  );
 }
 
 function NotificationPanel({ user, selectedKinds }: { user: User | null; selectedKinds: NotificationKind[] }) {
@@ -2510,6 +2626,7 @@ type AdminUser = {
   created_at: string;
   is_premium?: boolean;
   premium_until?: string | null;
+  manual_badges?: string[];
 };
 
 function SiteSettingsPanel() {
@@ -2533,7 +2650,92 @@ function SiteSettingsPanel() {
 }
 
 function AdminPanel() {
-  return <><SiteSettingsPanel /><AdminUserPanel /><PinningPanel /></>;
+  return <><SiteSettingsPanel /><AdminUserPanel /><AdminBadgePanel /><PinningPanel /></>;
+}
+
+type ManualBadgeKey = Extract<BadgeKey, "early_member" | "event_participant">;
+
+function AdminBadgePanel() {
+  const [users, setUsers] = useState<Array<Pick<AdminUser, "id" | "username" | "display_name" | "manual_badges">>>([]);
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [earnedBadges, setEarnedBadges] = useState<BadgeKey[]>([]);
+  const [manualBadges, setManualBadges] = useState<ManualBadgeKey[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [badgeRefresh, setBadgeRefresh] = useState(0);
+
+  useEffect(() => {
+    fetch("/api/admin").then(async (response) => {
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not load badge profiles");
+      setUsers(body.users ?? []);
+      setSelectedUserId((current) => current || body.users?.[0]?.id || "");
+    }).catch((loadError: unknown) => setError(loadError instanceof Error ? loadError.message : "Could not load badge profiles"));
+  }, []);
+
+  useEffect(() => {
+    const user = users.find((candidate) => candidate.id === selectedUserId);
+    setManualBadges((user?.manual_badges ?? []).filter((badge): badge is ManualBadgeKey => badge === "early_member" || badge === "event_participant"));
+    if (!selectedUserId) {
+      setEarnedBadges([]);
+      return;
+    }
+    let active = true;
+    const loadBadges = async () => {
+      const { data, error: badgeError } = await supabase.rpc("get_profile_badges", { p_profile_id: selectedUserId });
+      if (!active) return;
+      if (badgeError) setError(badgeError.message);
+      else setEarnedBadges((data ?? []).map((row: { badge_key: string }) => row.badge_key).filter((badge: string): badge is BadgeKey => badge in BADGE_PRESENTATION));
+    };
+    void loadBadges();
+    return () => { active = false; };
+  }, [selectedUserId, users, badgeRefresh]);
+
+  const toggleManualBadge = async (badge: ManualBadgeKey, checked: boolean) => {
+    if (!selectedUserId) return;
+    const nextBadges = checked
+      ? [...new Set([...manualBadges, badge])]
+      : manualBadges.filter((current) => current !== badge);
+    setSaving(true);
+    setError("");
+    const response = await fetch("/api/admin", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "manual-badges", id: selectedUserId, badge_keys: nextBadges }),
+    });
+    const body = await response.json();
+    setSaving(false);
+    if (!response.ok) {
+      setError(body.error ?? "Could not update badges");
+      return;
+    }
+    setManualBadges(nextBadges);
+    setUsers((current) => current.map((user) => user.id === selectedUserId ? { ...user, manual_badges: nextBadges } : user));
+    const { data } = await supabase.rpc("get_profile_badges", { p_profile_id: selectedUserId });
+    setEarnedBadges((data ?? []).map((row: { badge_key: string }) => row.badge_key).filter((key: string): key is BadgeKey => key in BADGE_PRESENTATION));
+  };
+
+  return (
+    <section className="content-wrap admin-settings-wrap">
+      <div className="analytics-card admin-badges-card">
+        <div className="admin-badges-heading"><div><span className="section-kicker">Recognition</span><h2>Profile badges</h2></div><button className="icon-button" type="button" title="Refresh earned badges" aria-label="Refresh earned badges" onClick={() => setBadgeRefresh((current) => current + 1)}><RefreshCw size={17} /></button></div>
+        <label className="admin-badge-user">Choose a profile
+          <select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
+            {users.map((user) => <option value={user.id} key={user.id}>{user.display_name} (@{user.username})</option>)}
+          </select>
+        </label>
+        {error && <p className="profile-error" role="alert">{error}</p>}
+        <div className="admin-earned-badges"><span className="section-kicker">Earned badges</span><ProfileBadges badges={earnedBadges} compact />{!earnedBadges.length && <p className="subtitle">No badges earned yet.</p>}</div>
+        <div className="admin-manual-badges">
+          <span className="section-kicker">Manual awards</span>
+          {(["early_member", "event_participant"] as ManualBadgeKey[]).map((badge) => {
+            const { label, detail } = BADGE_PRESENTATION[badge];
+            return <label className="admin-manual-badge" key={badge}><input type="checkbox" checked={manualBadges.includes(badge)} disabled={saving || !selectedUserId} onChange={(event) => void toggleManualBadge(badge, event.target.checked)} /><span><strong>{label}</strong><small>{detail}</small></span></label>;
+          })}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function AdminUserPanel() {
@@ -3363,6 +3565,8 @@ function Writer({
   setStoryDescription,
   selectedGenres,
   setSelectedGenres,
+  selectedCoWriterIds,
+  setSelectedCoWriterIds,
   storyVisibility,
   setStoryVisibility,
   pages,
@@ -3383,6 +3587,8 @@ function Writer({
   setStoryDescription: (value: string) => void;
   selectedGenres: string[];
   setSelectedGenres: (genres: string[]) => void;
+  selectedCoWriterIds: string[];
+  setSelectedCoWriterIds: (ids: string[]) => void;
   storyVisibility: "public" | "followers" | "private";
   setStoryVisibility: (value: "public" | "followers" | "private") => void;
   pages: string[];
@@ -3401,6 +3607,32 @@ function Writer({
   const [genreMenuOpen, setGenreMenuOpen] = useState(false);
   const [selectedFont, setSelectedFont] = useState("Libre Baskerville");
   const [storyCharacterCount, setStoryCharacterCount] = useState(0);
+  const [coauthorSearch, setCoauthorSearch] = useState("");
+  const [coauthorProfiles, setCoauthorProfiles] = useState<Array<{ id: string; username: string; display_name: string }>>([]);
+  useEffect(() => {
+    if (!user) {
+      setCoauthorProfiles([]);
+      return;
+    }
+    const loadCoauthorProfiles = async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("id,username,display_name")
+        .neq("id", user.id)
+        .order("display_name")
+        .limit(200);
+      setCoauthorProfiles(data ?? []);
+    };
+    void loadCoauthorProfiles();
+  }, [user?.id]);
+  const selectedCoAuthors = selectedCoWriterIds.flatMap((id) => {
+    const profile = coauthorProfiles.find((candidate) => candidate.id === id);
+    return profile ? [profile] : [];
+  });
+  const matchingCoAuthors = coauthorProfiles.filter((profile) =>
+    !selectedCoWriterIds.includes(profile.id) &&
+    `${profile.display_name} ${profile.username}`.toLowerCase().includes(coauthorSearch.trim().toLowerCase()),
+  ).slice(0, 8);
   const rememberSelection = () => {
     const editor = storyEditorRef.current;
     const selection = window.getSelection();
@@ -3698,6 +3930,34 @@ function Writer({
                 })}
               </div>
             )}
+          </div>
+          <div className="coauthor-field">
+            <div className="coauthor-heading"><span>Co-writers</span><small>{selectedCoWriterIds.length} / 3</small></div>
+            {selectedCoAuthors.length > 0 && (
+              <div className="coauthor-selected-list">
+                {selectedCoAuthors.map((profile) => (
+                  <span className="coauthor-chip" key={profile.id}>
+                    {profile.display_name}
+                    <button type="button" aria-label={`Remove ${profile.display_name}`} onClick={() => setSelectedCoWriterIds(selectedCoWriterIds.filter((id) => id !== profile.id))}><X size={13} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {selectedCoWriterIds.length < 3 && (
+              <>
+                <input className="coauthor-search" value={coauthorSearch} onChange={(event) => setCoauthorSearch(event.target.value)} placeholder="Search people by name or username" aria-label="Search co-writers" />
+                {coauthorSearch.trim() && (
+                  <div className="coauthor-results">
+                    {matchingCoAuthors.length ? matchingCoAuthors.map((profile) => (
+                      <button type="button" key={profile.id} onClick={() => { setSelectedCoWriterIds([...selectedCoWriterIds, profile.id]); setCoauthorSearch(""); }}>
+                        <strong>{profile.display_name}</strong><small>@{profile.username}</small>
+                      </button>
+                    )) : <p>No matching profiles.</p>}
+                  </div>
+                )}
+              </>
+            )}
+            <p className="coauthor-hint">Co-writers are credited on the story. Only you can edit it.</p>
           </div>
           <label>
             Who can read this?
