@@ -2,6 +2,16 @@ import { createClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "../../../lib/supabase/server";
 
 const adminUserId = "b3cf6d3d-3f8c-43f1-92b6-b07b115accde";
+const profileBadgeKeys = new Set([
+  "early_member",
+  "story_seeker",
+  "century_story",
+  "community_favorite",
+  "premium_member",
+  "event_participant",
+  "hitmaker",
+  "collaborative_spark",
+]);
 
 export async function GET() {
   const authClient = await createServerSupabaseClient();
@@ -65,8 +75,7 @@ export async function PUT(request: Request) {
     badge_keys?: string[];
   };
   if (type === "manual-badges") {
-    const allowedBadges = new Set(["early_member", "event_participant"]);
-    if (!id || !Array.isArray(badge_keys) || badge_keys.some((badge) => !allowedBadges.has(badge))) {
+    if (!id || !Array.isArray(badge_keys) || badge_keys.some((badge) => !profileBadgeKeys.has(badge)) || new Set(badge_keys).size !== badge_keys.length) {
       return Response.json({ error: "id and valid manual badge keys are required" }, { status: 400 });
     }
     const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });

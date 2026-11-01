@@ -24,7 +24,6 @@ import {
   PenLine,
   Pin,
   Plus,
-  RefreshCw,
   Search,
   Send,
   Settings2,
@@ -2650,98 +2649,15 @@ function SiteSettingsPanel() {
 }
 
 function AdminPanel() {
-  return <><SiteSettingsPanel /><AdminUserPanel /><AdminBadgePanel /><PinningPanel /></>;
-}
-
-type ManualBadgeKey = Extract<BadgeKey, "early_member" | "event_participant">;
-
-function AdminBadgePanel() {
-  const [users, setUsers] = useState<Array<Pick<AdminUser, "id" | "username" | "display_name" | "manual_badges">>>([]);
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [earnedBadges, setEarnedBadges] = useState<BadgeKey[]>([]);
-  const [manualBadges, setManualBadges] = useState<ManualBadgeKey[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [badgeRefresh, setBadgeRefresh] = useState(0);
-
-  useEffect(() => {
-    fetch("/api/admin").then(async (response) => {
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Could not load badge profiles");
-      setUsers(body.users ?? []);
-      setSelectedUserId((current) => current || body.users?.[0]?.id || "");
-    }).catch((loadError: unknown) => setError(loadError instanceof Error ? loadError.message : "Could not load badge profiles"));
-  }, []);
-
-  useEffect(() => {
-    const user = users.find((candidate) => candidate.id === selectedUserId);
-    setManualBadges((user?.manual_badges ?? []).filter((badge): badge is ManualBadgeKey => badge === "early_member" || badge === "event_participant"));
-    if (!selectedUserId) {
-      setEarnedBadges([]);
-      return;
-    }
-    let active = true;
-    const loadBadges = async () => {
-      const { data, error: badgeError } = await supabase.rpc("get_profile_badges", { p_profile_id: selectedUserId });
-      if (!active) return;
-      if (badgeError) setError(badgeError.message);
-      else setEarnedBadges((data ?? []).map((row: { badge_key: string }) => row.badge_key).filter((badge: string): badge is BadgeKey => badge in BADGE_PRESENTATION));
-    };
-    void loadBadges();
-    return () => { active = false; };
-  }, [selectedUserId, users, badgeRefresh]);
-
-  const toggleManualBadge = async (badge: ManualBadgeKey, checked: boolean) => {
-    if (!selectedUserId) return;
-    const nextBadges = checked
-      ? [...new Set([...manualBadges, badge])]
-      : manualBadges.filter((current) => current !== badge);
-    setSaving(true);
-    setError("");
-    const response = await fetch("/api/admin", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "manual-badges", id: selectedUserId, badge_keys: nextBadges }),
-    });
-    const body = await response.json();
-    setSaving(false);
-    if (!response.ok) {
-      setError(body.error ?? "Could not update badges");
-      return;
-    }
-    setManualBadges(nextBadges);
-    setUsers((current) => current.map((user) => user.id === selectedUserId ? { ...user, manual_badges: nextBadges } : user));
-    const { data } = await supabase.rpc("get_profile_badges", { p_profile_id: selectedUserId });
-    setEarnedBadges((data ?? []).map((row: { badge_key: string }) => row.badge_key).filter((key: string): key is BadgeKey => key in BADGE_PRESENTATION));
-  };
-
-  return (
-    <section className="content-wrap admin-settings-wrap">
-      <div className="analytics-card admin-badges-card">
-        <div className="admin-badges-heading"><div><span className="section-kicker">Recognition</span><h2>Profile badges</h2></div><button className="icon-button" type="button" title="Refresh earned badges" aria-label="Refresh earned badges" onClick={() => setBadgeRefresh((current) => current + 1)}><RefreshCw size={17} /></button></div>
-        <label className="admin-badge-user">Choose a profile
-          <select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
-            {users.map((user) => <option value={user.id} key={user.id}>{user.display_name} (@{user.username})</option>)}
-          </select>
-        </label>
-        {error && <p className="profile-error" role="alert">{error}</p>}
-        <div className="admin-earned-badges"><span className="section-kicker">Earned badges</span><ProfileBadges badges={earnedBadges} compact />{!earnedBadges.length && <p className="subtitle">No badges earned yet.</p>}</div>
-        <div className="admin-manual-badges">
-          <span className="section-kicker">Manual awards</span>
-          {(["early_member", "event_participant"] as ManualBadgeKey[]).map((badge) => {
-            const { label, detail } = BADGE_PRESENTATION[badge];
-            return <label className="admin-manual-badge" key={badge}><input type="checkbox" checked={manualBadges.includes(badge)} disabled={saving || !selectedUserId} onChange={(event) => void toggleManualBadge(badge, event.target.checked)} /><span><strong>{label}</strong><small>{detail}</small></span></label>;
-          })}
-        </div>
-      </div>
-    </section>
-  );
+  return <><SiteSettingsPanel /><AdminUserPanel /><PinningPanel /></>;
 }
 
 function AdminUserPanel() {
   const [data, setData] = useState<{ users: AdminUser[]; stories: Array<{ id: string; title: string; status: string; visibility: string; author_id: string; created_at: string; profiles?: { id: string } | { id: string }[] | null }> } | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+  const [badgeMenuOpen, setBadgeMenuOpen] = useState(false);
+  const [premiumDuration, setPremiumDuration] = useState("unlimited");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -2752,6 +2668,8 @@ function AdminUserPanel() {
     if (selectedUserId) {
       const person = data.users.find((user) => user.id === selectedUserId) ?? null;
       setEditingUser(person ? { ...person, bio: person.bio ?? "", avatar_url: person.avatar_url ?? null } : null);
+      setPremiumDuration(person?.premium_until ? "custom" : "unlimited");
+      setBadgeMenuOpen(false);
     }
   }, [data, selectedUserId]);
 
@@ -2769,6 +2687,42 @@ function AdminUserPanel() {
     setSaving(false);
     if (!response.ok) setError(body.error ?? "Premium update failed");
     else await load();
+  };
+
+  const savePremium = async () => {
+    if (!editingUser) return;
+    if (premiumDuration === "custom") {
+      const expiry = editingUser.premium_until ? new Date(editingUser.premium_until) : null;
+      if (!expiry || Number.isNaN(expiry.getTime()) || expiry.getTime() <= Date.now()) {
+        setError("Choose a future Premium expiration date.");
+        return;
+      }
+      await updatePremium(true, expiry.toISOString());
+      return;
+    }
+    const expiry = premiumDuration === "unlimited"
+      ? null
+      : new Date(Date.now() + Number(premiumDuration) * 86400000).toISOString();
+    await updatePremium(true, expiry);
+  };
+
+  const saveManualBadges = async () => {
+    if (!editingUser) return;
+    setSaving(true);
+    setError("");
+    const response = await fetch("/api/admin", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "manual-badges", id: editingUser.id, badge_keys: editingUser.manual_badges ?? [] }),
+    });
+    const body = await response.json();
+    setSaving(false);
+    if (!response.ok) {
+      setError(body.error ?? "Badge update failed");
+      return;
+    }
+    await load();
+    setBadgeMenuOpen(false);
   };
 
   const updateUser = async () => {
@@ -2802,7 +2756,76 @@ function AdminUserPanel() {
     return story.author_id === selectedUserId || relatedProfile?.id === selectedUserId;
   }) ?? [];
 
-  return <section className="content-wrap admin-wrap"><p className="eyebrow"><BarChart3 size={14} /> Private admin</p><h1>Manage the <em>reading room.</em></h1><p className="subtitle">Users and all stories, including private ones, are visible only to the approved admin account.</p>{error ? <p className="profile-error">{error}. Add SUPABASE_SERVICE_ROLE_KEY to Vercel if needed.</p> : !data ? <p className="subtitle">Loading admin data...</p> : <div className="admin-grid"><div className="analytics-card"><span className="section-kicker">People</span><h2>{data.users.length} users</h2><div className="admin-user-list">{data.users.map((person) => <button type="button" className={`admin-user-card ${selectedUserId === person.id ? "selected" : ""}`} key={person.id} onClick={() => setSelectedUserId(person.id)}><span className="avatar avatar-plum">{person.display_name.slice(0, 2).toUpperCase()}</span><span><strong>{person.display_name}</strong><small>@{person.username}</small></span><span className="admin-user-meta">Joined {new Date(person.created_at).toLocaleDateString()}</span></button>)}</div></div><div className="analytics-card admin-editor-panel">{editingUser ? <><span className="section-kicker">Profile editor</span><h2>{editingUser.display_name}</h2><div className="admin-editor-form"><div className="admin-avatar-preview">{editingUser.avatar_url ? <img src={editingUser.avatar_url} alt="" /> : <span>{editingUser.display_name.slice(0, 2).toUpperCase()}</span>}</div><label>Display name<input value={editingUser.display_name} onChange={(event) => setEditingUser({ ...editingUser, display_name: event.target.value })} /></label><label>Username<input value={editingUser.username} onChange={(event) => setEditingUser({ ...editingUser, username: event.target.value.replace(/[^a-zA-Z0-9_]/g, "") })} /></label><label>Avatar URL<input value={editingUser.avatar_url ?? ""} onChange={(event) => setEditingUser({ ...editingUser, avatar_url: event.target.value || null })} placeholder="https://..." /></label><label>Bio<textarea value={editingUser.bio ?? ""} onChange={(event) => setEditingUser({ ...editingUser, bio: event.target.value })} /></label><label className="admin-premium-toggle"><input type="checkbox" checked={editingUser.is_premium ?? false} onChange={(event) => setEditingUser({ ...editingUser, is_premium: event.target.checked })} /> Premium member</label><label>Premium until<input type="datetime-local" value={editingUser.premium_until ? new Date(editingUser.premium_until).toISOString().slice(0, 16) : ""} onChange={(event) => setEditingUser({ ...editingUser, premium_until: event.target.value ? new Date(event.target.value).toISOString() : null })} /></label><button className="quiet-button" type="button" onClick={() => void updatePremium(editingUser.is_premium ?? false, editingUser.premium_until)} disabled={saving}>Save premium access</button><div className="admin-editor-actions"><button className="delete-button" onClick={() => remove("profile", editingUser.id, editingUser.display_name)}><X size={14} /> Delete user</button><button className="primary-button" onClick={() => void updateUser()} disabled={saving}>{saving ? "Saving..." : "Save changes"}</button></div></div><div className="admin-story-panel"><span className="section-kicker">Stories</span><div className="admin-story-scroll">{selectedStories.length ? selectedStories.map((story) => <div className="admin-story-item" key={story.id}><div><strong>{story.title}</strong><small>{story.visibility} · {story.status}</small></div><button className="delete-button" onClick={() => remove("story", story.id, story.title)}><X size={14} /></button></div>) : <p className="subtitle">No stories for this user yet.</p>}</div></div></> : <p className="subtitle">Select a user to edit.</p>}</div></div>}</section>;
+  return (
+    <section className="content-wrap admin-wrap">
+      <p className="eyebrow"><BarChart3 size={14} /> Private admin</p>
+      <h1>Manage the <em>reading room.</em></h1>
+      <p className="subtitle">Users and all stories, including private ones, are visible only to the approved admin account.</p>
+      {error ? <p className="profile-error">{error}. Add SUPABASE_SERVICE_ROLE_KEY to Vercel if needed.</p> : !data ? <p className="subtitle">Loading admin data...</p> : (
+        <div className="admin-grid">
+          <div className="analytics-card">
+            <span className="section-kicker">People</span>
+            <h2>{data.users.length} users</h2>
+            <div className="admin-user-list">
+              {data.users.map((person) => (
+                <button type="button" className={`admin-user-card ${selectedUserId === person.id ? "selected" : ""}`} key={person.id} onClick={() => setSelectedUserId(person.id)}>
+                  <span className="avatar avatar-plum">{person.display_name.slice(0, 2).toUpperCase()}</span>
+                  <span><strong>{person.display_name}</strong><small>@{person.username}</small></span>
+                  <span className="admin-user-meta">Joined {new Date(person.created_at).toLocaleDateString()}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="analytics-card admin-editor-panel">
+            {editingUser ? <>
+              <span className="section-kicker">Profile editor</span>
+              <h2>{editingUser.display_name}</h2>
+              <div className="admin-editor-form">
+                <div className="admin-avatar-preview">{editingUser.avatar_url ? <img src={editingUser.avatar_url} alt="" /> : <span>{editingUser.display_name.slice(0, 2).toUpperCase()}</span>}</div>
+                <label>Display name<input value={editingUser.display_name} onChange={(event) => setEditingUser({ ...editingUser, display_name: event.target.value })} /></label>
+                <label>Username<input value={editingUser.username} onChange={(event) => setEditingUser({ ...editingUser, username: event.target.value.replace(/[^a-zA-Z0-9_]/g, "") })} /></label>
+                <label>Avatar URL<input value={editingUser.avatar_url ?? ""} onChange={(event) => setEditingUser({ ...editingUser, avatar_url: event.target.value || null })} placeholder="https://..." /></label>
+                <label>Bio<textarea value={editingUser.bio ?? ""} onChange={(event) => setEditingUser({ ...editingUser, bio: event.target.value })} /></label>
+                <section className="admin-premium-control" aria-labelledby="admin-premium-title">
+                  <div className="admin-premium-heading"><span className="admin-premium-mark"><Sparkles size={16} /></span><div><h3 id="admin-premium-title">Premium access</h3><p>{editingUser.is_premium ? "Premium is active for this profile." : "Choose a term to grant Premium."}</p></div><span className={`admin-premium-status ${editingUser.is_premium ? "active" : "inactive"}`}>{editingUser.is_premium ? "Active" : "Free"}</span></div>
+                  <label className="admin-premium-duration">Membership term
+                    <select value={premiumDuration} onChange={(event) => setPremiumDuration(event.target.value)} disabled={saving}>
+                      <option value="unlimited">No expiration</option>
+                      <option value="30">30 days</option>
+                      <option value="90">90 days</option>
+                      <option value="365">1 year</option>
+                      <option value="custom">Custom date</option>
+                    </select>
+                  </label>
+                  {premiumDuration === "custom" && <label className="admin-premium-duration">Expires on<input type="datetime-local" value={editingUser.premium_until ? new Date(editingUser.premium_until).toISOString().slice(0, 16) : ""} onChange={(event) => setEditingUser({ ...editingUser, premium_until: event.target.value ? new Date(event.target.value).toISOString() : null })} disabled={saving} /></label>}
+                  <div className="admin-premium-actions">
+                    <button className="premium-save-button" type="button" onClick={() => void savePremium()} disabled={saving}>{saving ? "Saving..." : editingUser.is_premium ? "Update Premium" : "Grant Premium"}<Sparkles size={15} /></button>
+                    {editingUser.is_premium && <button className="premium-remove-button" type="button" onClick={() => void updatePremium(false, null)} disabled={saving}>Remove Premium</button>}
+                  </div>
+                </section>
+                <div className="admin-badge-editor">
+                  <details className="admin-badge-dropdown" open={badgeMenuOpen} onToggle={(event) => setBadgeMenuOpen(event.currentTarget.open)}>
+                    <summary><span><BadgeCheck size={16} /> Assign profile badges</span><small>{editingUser.manual_badges?.length ?? 0} selected <ChevronDown size={14} /></small></summary>
+                    <div className="admin-badge-menu">
+                      {Object.entries(BADGE_PRESENTATION).map(([badgeKey, badge]) => {
+                        const key = badgeKey as BadgeKey;
+                        const assigned = editingUser.manual_badges?.includes(key) ?? false;
+                        return <label className="admin-badge-option" key={key}><input type="checkbox" checked={assigned} onChange={(event) => setEditingUser({ ...editingUser, manual_badges: event.target.checked ? [...new Set([...(editingUser.manual_badges ?? []), key])] : (editingUser.manual_badges ?? []).filter((item) => item !== key) })} /><span><strong>{badge.label}</strong><small>{badge.detail}</small></span></label>;
+                      })}
+                      <button className="admin-badge-save" type="button" onClick={() => void saveManualBadges()} disabled={saving}>{saving ? "Saving badges..." : "Save badge awards"}</button>
+                    </div>
+                  </details>
+                  <ProfileBadges badges={editingUser.manual_badges} compact />
+                </div>
+                <div className="admin-editor-actions"><button className="delete-button" onClick={() => remove("profile", editingUser.id, editingUser.display_name)}><X size={14} /> Delete user</button><button className="primary-button" onClick={() => void updateUser()} disabled={saving}>{saving ? "Saving..." : "Save changes"}</button></div>
+              </div>
+              <div className="admin-story-panel"><span className="section-kicker">Stories</span><div className="admin-story-scroll">{selectedStories.length ? selectedStories.map((story) => <div className="admin-story-item" key={story.id}><div><strong>{story.title}</strong><small>{story.visibility} · {story.status}</small></div><button className="delete-button" onClick={() => remove("story", story.id, story.title)}><X size={14} /></button></div>) : <p className="subtitle">No stories for this user yet.</p>}</div></div>
+            </> : <p className="subtitle">Select a user to edit.</p>}
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function PinningPanel() {
