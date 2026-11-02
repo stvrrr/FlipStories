@@ -61,7 +61,7 @@ type Story = {
   coAuthors?: Array<{ id: string; username: string; display_name: string }>;
   isCoWritten?: boolean;
 };
-type Profile = { id?: string; username: string; display_name: string; bio: string; avatar_url: string; profile_links: string[]; badges?: string[] };
+type Profile = { id?: string; username: string; display_name: string; bio: string; avatar_url: string; profile_links: string[]; badges?: string[]; badge_order?: string[] };
 type BadgeKey = "early_member" | "story_seeker" | "century_story" | "community_favorite" | "premium_member" | "event_participant" | "hitmaker" | "collaborative_spark";
 const BADGE_PRESENTATION: Record<BadgeKey, { label: string; detail: string; icon: typeof BadgeCheck }> = {
   early_member: { label: "Early Member", detail: "Here from the beginning", icon: BadgeCheck },
@@ -73,6 +73,12 @@ const BADGE_PRESENTATION: Record<BadgeKey, { label: string; detail: string; icon
   hitmaker: { label: "Hitmaker", detail: "Five stories passed 100 likes", icon: Trophy },
   collaborative_spark: { label: "Collaborative Spark", detail: "Three co-written stories reached 20 likes", icon: PenLine },
 };
+
+function orderProfileBadges(badges: string[], order: string[] = []) {
+  const earned = [...new Set(badges)].filter((badge) => badge in BADGE_PRESENTATION);
+  const ordered = order.filter((badge) => earned.includes(badge));
+  return [...ordered, ...earned.filter((badge) => !ordered.includes(badge))];
+}
 
 function ProfileBadges({ badges, compact = false }: { badges?: string[]; compact?: boolean }) {
   const earnedBadges = (badges ?? []).filter((badge): badge is BadgeKey => badge in BADGE_PRESENTATION);
@@ -2023,6 +2029,8 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
   const [section, setSection] = useState<"general" | "profile">("general");
   const [profile, setProfile] = useState<Profile>({ username: "", display_name: "", bio: "", avatar_url: "", profile_links: [] });
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [badgeOrderDraft, setBadgeOrderDraft] = useState<string[]>([]);
+  const [draggedBadge, setDraggedBadge] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -2043,8 +2051,16 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
   const [emailCodeSent, setEmailCodeSent] = useState(false);
   useEffect(() => {
     if (!user) { setLoading(false); return; }
-    supabase.from("profiles").select("username,display_name,bio,avatar_url,profile_links").eq("id", user.id).maybeSingle().then(({ data }: { data: Profile | null }) => {
-      if (data) setProfile({ username: data.username ?? "", display_name: data.display_name ?? "", bio: data.bio ?? "", avatar_url: data.avatar_url ?? "", profile_links: normalizeProfileLinks(data.profile_links ?? []) });
+    Promise.all([
+      supabase.from("profiles").select("username,display_name,bio,avatar_url,profile_links,badge_order").eq("id", user.id).maybeSingle(),
+      supabase.rpc("get_profile_badges", { p_profile_id: user.id }),
+    ]).then(([profileResult, badgeResult]) => {
+      const data = profileResult.data as Profile | null;
+      const earnedBadges = (badgeResult.data ?? []).map((row: { badge_key: string }) => row.badge_key);
+      if (data) {
+        setProfile({ username: data.username ?? "", display_name: data.display_name ?? "", bio: data.bio ?? "", avatar_url: data.avatar_url ?? "", profile_links: normalizeProfileLinks(data.profile_links ?? []), badges: earnedBadges, badge_order: data.badge_order ?? [] });
+        setBadgeOrderDraft(orderProfileBadges(earnedBadges, data.badge_order ?? []));
+      }
       setLoading(false);
     });
   }, [user]);
@@ -2083,7 +2099,7 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
       avatarUrl = supabase.storage.from("avatars").getPublicUrl(uploadedAvatarPath).data.publicUrl;
     }
 
-    const { error } = await supabase.from("profiles").update({ username: profile.username.trim().toLowerCase(), display_name: profile.display_name.trim(), bio: profile.bio.trim(), avatar_url: avatarUrl, profile_links: profileLinks }).eq("id", user.id).select("id").single();
+    const { error } = await supabase.from("profiles").update({ username: profile.username.trim().toLowerCase(), display_name: profile.display_name.trim(), bio: profile.bio.trim(), avatar_url: avatarUrl, profile_links: profileLinks, badge_order: badgeOrderDraft }).eq("id", user.id).select("id").single();
     if (error) {
       if (uploadedAvatarPath) await supabase.storage.from("avatars").remove([uploadedAvatarPath]);
       setSaving(false);
@@ -2249,6 +2265,14 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
       setDeleteError(error instanceof Error ? error.message : "Account deletion failed. Please try again.");
     }
   };
+  const moveBadge = (badge: string, targetIndex: number) => {
+    setBadgeOrderDraft((current) => {
+      const withoutBadge = current.filter((item) => item !== badge);
+      const next = [...withoutBadge];
+      next.splice(Math.max(0, Math.min(targetIndex, next.length)), 0, badge);
+      return next;
+    });
+  };
   const closeDeleteDialog = () => {
     if (deleting) return;
     setDeleteDialogOpen(false);
@@ -2377,6 +2401,17 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
               })} placeholder="https://your-site.com" /></label>
             ))}
             <p className="profile-hint">Up to 3 links, no NSFW or 18+ content.</p>
+            {badgeOrderDraft.length > 0 && <section className="badge-order-section" aria-labelledby="badge-order-title">
+              <div className="badge-order-heading"><div><span className="section-kicker">Profile badges</span><h3 id="badge-order-title">Choose badge order</h3></div><small>Drag to reorder</small></div>
+              <div className="badge-order-list">
+                {badgeOrderDraft.map((badge, index) => {
+                  const presentation = BADGE_PRESENTATION[badge as BadgeKey];
+                  if (!presentation) return null;
+                  const Icon = presentation.icon;
+                  return <div className={`badge-order-item ${draggedBadge === badge ? "badge-order-item-dragging" : ""}`} draggable onDragStart={() => setDraggedBadge(badge)} onDragOver={(event) => event.preventDefault()} onDragEnd={() => setDraggedBadge(null)} onDrop={() => { if (draggedBadge) moveBadge(draggedBadge, index); setDraggedBadge(null); }} key={badge}><span className="badge-order-grip" aria-hidden="true">⠿</span><Icon size={17} /><span><strong>{presentation.label}</strong><small>{presentation.detail}</small></span><div className="badge-order-actions"><button type="button" className="icon-button" aria-label={`Move ${presentation.label} up`} disabled={index === 0} onClick={() => moveBadge(badge, index - 1)}>↑</button><button type="button" className="icon-button" aria-label={`Move ${presentation.label} down`} disabled={index === badgeOrderDraft.length - 1} onClick={() => moveBadge(badge, index + 1)}>↓</button></div></div>;
+                })}
+              </div>
+            </section>}
             {message && <p className="profile-error">{message}</p>}
             <button className="publish-button" disabled={saving}>{saving ? "Saving..." : "Save profile"} <Check size={16} /></button>
           </form>
@@ -2528,7 +2563,7 @@ function PublicProfile({
 
   useEffect(() => {
     const load = async () => {
-      const { data: profileRow } = await supabase.from("profiles").select("id,username,display_name,bio,avatar_url,profile_links").eq("username", username).maybeSingle();
+      const { data: profileRow } = await supabase.from("profiles").select("id,username,display_name,bio,avatar_url,profile_links,badge_order").eq("username", username).maybeSingle();
       if (!profileRow) return;
       const { data: badgeRows } = await supabase.rpc("get_profile_badges", { p_profile_id: profileRow.id });
       setProfile({
@@ -2536,7 +2571,7 @@ function PublicProfile({
         bio: profileRow.bio ?? "",
         avatar_url: profileRow.avatar_url ?? "",
         profile_links: normalizeProfileLinks(profileRow.profile_links ?? []),
-        badges: (badgeRows ?? []).map((row: { badge_key: string }) => row.badge_key),
+        badges: orderProfileBadges((badgeRows ?? []).map((row: { badge_key: string }) => row.badge_key), profileRow.badge_order ?? []),
       } as Profile);
       const [authoredResult, coauthorRefsResult] = await Promise.all([
         supabase.from("stories").select("id,title,excerpt,category,created_at,published_at,author_id,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)").eq("author_id", profileRow.id).eq("status", "published").eq("visibility", "public"),
