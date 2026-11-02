@@ -590,3 +590,19 @@
   .admin-account-details>div { grid-template-columns:1fr; gap:5px; }
   .admin-account-details dd { text-align:left; }
 }
+.donate-view { --donate-paper:var(--paper); --donate-raised:var(--raised); --donate-ink:var(--ink); --donate-muted:var(--muted); --donate-faint:var(--faint); --donate-line:var(--line); --donate-accent:var(--action); display:grid; grid-template-columns:minmax(0,1fr) minmax(320px,430px); align-items:start; gap:clamp(28px,6vw,76px); }
+.donate-intro { max-width:480px; padding-top:14px; }
+.donate-intro h1 { margin:0; color:var(--ink); font-family:"Libre Baskerville",serif; font-size:clamp(2rem,4vw,3.2rem); font-weight:400; line-height:1.16; }
+.donate-intro h1 em { color:var(--sage); }
+.donate-intro .subtitle { max-width:390px; margin-top:17px; line-height:1.75; }
+.donate-safety-note { max-width:390px; margin:30px 0 0; padding:14px 0 0; border-top:1px solid var(--line); color:var(--muted); font-size:11px; line-height:1.6; }
+.dark-mode .donate-view .amountInput,.dark-mode .donate-view .addressBox { background:var(--paper); }
+.dark-mode .donate-view .qrFrame { background:var(--raised); }
+@media (max-width:900px) {
+  .donate-view { grid-template-columns:minmax(0,1fr) minmax(300px,380px); gap:28px; }
+}
+@media (max-width:680px) {
+  .donate-view { grid-template-columns:minmax(0,1fr); gap:24px; }
+  .donate-intro { padding-top:0; }
+  .donate-view .card { width:100%; max-width:450px; }
+}
