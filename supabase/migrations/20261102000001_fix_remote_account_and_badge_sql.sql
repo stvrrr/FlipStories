@@ -4,18 +4,21 @@ create table if not exists public.story_views (
   viewed_at timestamptz not null default now()
 );
 
+alter table public.story_views
+  add column if not exists viewed_at timestamptz not null default now();
+
 create index if not exists story_views_story_user_viewed_idx
   on public.story_views (story_id, user_id, viewed_at desc);
 
 alter table public.story_views enable row level security;
-revoke all on public.story_views from anon;
-grant select, insert on public.story_views to authenticated;
+grant insert on public.story_views to anon, authenticated;
+grant select on public.story_views to authenticated;
 
 drop policy if exists "Users can insert story views" on public.story_views;
 create policy "Users can insert story views"
   on public.story_views for insert
-  to authenticated
-  with check (user_id = auth.uid());
+  to anon, authenticated
+  with check (user_id is null or user_id = auth.uid());
 
 drop policy if exists "Users can read story views" on public.story_views;
 create policy "Users can read story views"
