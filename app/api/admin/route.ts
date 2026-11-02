@@ -21,7 +21,7 @@ export async function GET() {
   if (!serviceKey) return Response.json({ error: "SUPABASE_SERVICE_ROLE_KEY is not configured" }, { status: 503 });
   const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const [{ data: users, error: usersError }, storyResult, { data: settings, error: settingsError }, { data: badgeRows, error: badgeError }] = await Promise.all([
-    admin.from("profiles").select("id,username,display_name,bio,avatar_url,created_at,is_premium,premium_until").order("created_at", { ascending: false }),
+    admin.from("profiles").select("id,username,display_name,bio,avatar_url,created_at,is_premium,premium_until,last_active_at").order("created_at", { ascending: false }),
     admin.from("stories").select("id,title,status,visibility,author_id,created_at,is_pinned,pin_label,profiles!stories_author_id_fkey(id)").order("created_at", { ascending: false }),
     admin.from("site_settings").select("site_image_url").eq("id", true).maybeSingle(),
     admin.from("profile_badges").select("profile_id,badge_key"),
@@ -29,6 +29,19 @@ export async function GET() {
   if (usersError) return Response.json({ error: `Could not load users: ${usersError.message}` }, { status: 500 });
   if (settingsError) return Response.json({ error: `Could not load site settings: ${settingsError.message}` }, { status: 500 });
   if (badgeError) return Response.json({ error: `Could not load profile badges: ${badgeError.message}` }, { status: 500 });
+  const authUsersById = new Map<string, { email: string | null; last_sign_in_at: string | null; banned_until: string | null }>();
+  for (let page = 1; ; page += 1) {
+    const { data: authUsers, error: authUsersError } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+    if (authUsersError) return Response.json({ error: `Could not load account details: ${authUsersError.message}` }, { status: 500 });
+    for (const authUser of authUsers.users) {
+      authUsersById.set(authUser.id, {
+        email: authUser.email ?? null,
+        last_sign_in_at: authUser.last_sign_in_at ?? null,
+        banned_until: authUser.banned_until ?? null,
+      });
+    }
+    if (authUsers.users.length < 1000) break;
+  }
   const manualBadgesByProfile = new Map<string, string[]>();
   for (const badge of badgeRows ?? []) {
     manualBadgesByProfile.set(badge.profile_id, [...(manualBadgesByProfile.get(badge.profile_id) ?? []), badge.badge_key]);
@@ -47,7 +60,11 @@ export async function GET() {
   }
 
   return Response.json({
-    users: (users ?? []).map((profile) => ({ ...profile, manual_badges: manualBadgesByProfile.get(profile.id) ?? [] })),
+    users: (users ?? []).map((profile) => ({
+      ...profile,
+      ...authUsersById.get(profile.id),
+      manual_badges: manualBadgesByProfile.get(profile.id) ?? [],
+    })),
     stories: stories ?? [],
     pinningAvailable,
     settings: settings ?? { site_image_url: null },
@@ -60,8 +77,8 @@ export async function PUT(request: Request) {
   if (!user || user.id !== adminUserId) return Response.json({ error: "Forbidden" }, { status: 403 });
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!serviceKey) return Response.json({ error: "SUPABASE_SERVICE_ROLE_KEY is not configured" }, { status: 503 });
-  const { id, type, username, display_name, bio, avatar_url, site_image_url, is_pinned, pin_label, is_premium, premium_until, badge_keys } = await request.json() as {
-    type?: "profile" | "settings" | "pin-story" | "premium-profile" | "manual-badges";
+  const { id, type, username, display_name, bio, avatar_url, site_image_url, is_pinned, pin_label, is_premium, premium_until, badge_keys, ban_duration } = await request.json() as {
+    type?: "profile" | "settings" | "pin-story" | "premium-profile" | "manual-badges" | "account-suspension" | "password-reset";
     id?: string;
     username?: string;
     display_name?: string;
@@ -73,7 +90,32 @@ export async function PUT(request: Request) {
     is_premium?: boolean;
     premium_until?: string | null;
     badge_keys?: string[];
+    ban_duration?: string;
   };
+  if (type === "account-suspension") {
+    const allowedDurations = new Set(["24h", "168h", "720h", "876000h", "none"]);
+    if (id === adminUserId) return Response.json({ error: "The owner account cannot be suspended from this panel" }, { status: 400 });
+    if (!id || typeof ban_duration !== "string" || !allowedDurations.has(ban_duration)) {
+      return Response.json({ error: "id and a supported suspension duration are required" }, { status: 400 });
+    }
+    const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    const { error } = await admin.auth.admin.updateUserById(id, { ban_duration });
+    if (error) return Response.json({ error: error.message }, { status: 400 });
+    return Response.json({ ok: true });
+  }
+  if (type === "password-reset") {
+    if (!id) return Response.json({ error: "A user id is required" }, { status: 400 });
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const publicKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!publicKey) return Response.json({ error: "Supabase public key is not configured" }, { status: 503 });
+    const admin = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    const { data: authUser, error: authUserError } = await admin.auth.admin.getUserById(id);
+    if (authUserError || !authUser.user.email) return Response.json({ error: "Could not find an email for this account" }, { status: 404 });
+    const recoveryClient = createClient(url, publicKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    const { error } = await recoveryClient.auth.resetPasswordForEmail(authUser.user.email);
+    if (error) return Response.json({ error: error.message }, { status: 400 });
+    return Response.json({ ok: true });
+  }
   if (type === "manual-badges") {
     if (!id || !Array.isArray(badge_keys) || badge_keys.some((badge) => !profileBadgeKeys.has(badge)) || new Set(badge_keys).size !== badge_keys.length) {
       return Response.json({ error: "id and valid manual badge keys are required" }, { status: 400 });

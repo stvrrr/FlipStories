@@ -802,6 +802,22 @@ export default function HomePage() {
     return () => listener.subscription.unsubscribe();
   }, [supabase]);
   useEffect(() => {
+    if (!user) return;
+    const recordActivity = async () => {
+      if (document.visibilityState !== "visible") return;
+      const { error } = await supabase.rpc("record_profile_activity");
+      if (error) console.error("Could not update last active time.", error);
+    };
+    const onVisibilityChange = () => { void recordActivity(); };
+    void recordActivity();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onVisibilityChange);
+    };
+  }, [user?.id]);
+  useEffect(() => {
     if (!stories.length) return;
     const storyId = new URLSearchParams(window.location.search).get("story");
     if (!storyId) return;
@@ -2273,6 +2289,7 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
             <div><span className="section-kicker">Your account</span><h2>Profile</h2></div>
             <p>Update how readers see you and manage your account.</p>
           </div>
+          <p className="profile-hint activity-privacy-note">While signed in, Flip Stories records a coarse last-active time no more than once every 15 minutes. It is visible only to the site owner.</p>
           <form className="profile-form" onSubmit={saveProfile}>
             <div className="profile-preview">
               {profile.avatar_url
@@ -2657,6 +2674,10 @@ type AdminUser = {
   bio: string | null;
   avatar_url: string | null;
   created_at: string;
+  email?: string | null;
+  last_sign_in_at?: string | null;
+  last_active_at?: string | null;
+  banned_until?: string | null;
   is_premium?: boolean;
   premium_until?: string | null;
   manual_badges?: string[];
@@ -2692,8 +2713,10 @@ function AdminUserPanel() {
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [badgeMenuOpen, setBadgeMenuOpen] = useState(false);
   const [premiumDuration, setPremiumDuration] = useState("unlimited");
+  const [suspensionDuration, setSuspensionDuration] = useState("168h");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   useEffect(() => { void load(); }, []);
   useEffect(() => {
@@ -2721,6 +2744,42 @@ function AdminUserPanel() {
     setSaving(false);
     if (!response.ok) setError(body.error ?? "Premium update failed");
     else await load();
+  };
+
+  const updateAccountSuspension = async (banDuration: string) => {
+    if (!editingUser) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    const response = await fetch("/api/admin", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "account-suspension", id: editingUser.id, ban_duration: banDuration }),
+    });
+    const body = await response.json();
+    setSaving(false);
+    if (!response.ok) {
+      setError(body.error ?? "Account status update failed");
+      return;
+    }
+    setMessage(banDuration === "none" ? "Account reactivated." : "Account suspended.");
+    await load();
+  };
+
+  const sendPasswordReset = async () => {
+    if (!editingUser || !editingUser.email) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    const response = await fetch("/api/admin", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "password-reset", id: editingUser.id }),
+    });
+    const body = await response.json();
+    setSaving(false);
+    if (!response.ok) setError(body.error ?? "Could not send password reset code");
+    else setMessage("Password reset code sent to the account email.");
   };
 
   const savePremium = async () => {
@@ -2789,13 +2848,16 @@ function AdminUserPanel() {
     const relatedProfile = Array.isArray(story.profiles) ? story.profiles[0] : story.profiles;
     return story.author_id === selectedUserId || relatedProfile?.id === selectedUserId;
   }) ?? [];
+  const accountSuspended = Boolean(editingUser?.banned_until && new Date(editingUser.banned_until).getTime() > Date.now());
 
   return (
     <section className="content-wrap admin-wrap">
       <p className="eyebrow"><BarChart3 size={14} /> Private admin</p>
       <h1>Manage the <em>reading room.</em></h1>
       <p className="subtitle">Users and all stories, including private ones, are visible only to the approved admin account.</p>
-      {error ? <p className="profile-error">{error}. Add SUPABASE_SERVICE_ROLE_KEY to Vercel if needed.</p> : !data ? <p className="subtitle">Loading admin data...</p> : (
+      {error && <p className="profile-error" role="alert">{error}</p>}
+      {message && <p className="admin-success" role="status">{message}</p>}
+      {!data ? <p className="subtitle">Loading admin data...</p> : (
         <div className="admin-grid">
           <div className="analytics-card">
             <span className="section-kicker">People</span>
@@ -2804,7 +2866,7 @@ function AdminUserPanel() {
               {data.users.map((person) => (
                 <button type="button" className={`admin-user-card ${selectedUserId === person.id ? "selected" : ""}`} key={person.id} onClick={() => setSelectedUserId(person.id)}>
                   <span className="avatar avatar-plum">{person.display_name.slice(0, 2).toUpperCase()}</span>
-                  <span><strong>{person.display_name}</strong><small>@{person.username}</small></span>
+                  <span><strong>{person.display_name}</strong><small>@{person.username}{person.email ? ` · ${person.email}` : ""}</small></span>
                   <span className="admin-user-meta">Joined {new Date(person.created_at).toLocaleDateString()}</span>
                 </button>
               ))}
@@ -2820,6 +2882,33 @@ function AdminUserPanel() {
                 <label>Username<input value={editingUser.username} onChange={(event) => setEditingUser({ ...editingUser, username: event.target.value.replace(/[^a-zA-Z0-9_]/g, "") })} /></label>
                 <label>Avatar URL<input value={editingUser.avatar_url ?? ""} onChange={(event) => setEditingUser({ ...editingUser, avatar_url: event.target.value || null })} placeholder="https://..." /></label>
                 <label>Bio<textarea value={editingUser.bio ?? ""} onChange={(event) => setEditingUser({ ...editingUser, bio: event.target.value })} /></label>
+                <section className="admin-account-control" aria-labelledby="admin-account-title">
+                  <div className="admin-account-heading"><div><span className="section-kicker">Owner controls</span><h3 id="admin-account-title">Account access</h3></div><span className={`admin-account-status ${accountSuspended ? "suspended" : "active"}`}>{accountSuspended ? "Suspended" : "Active"}</span></div>
+                  <dl className="admin-account-details">
+                    <div><dt>Email</dt><dd>{editingUser.email ?? "No email address"}</dd></div>
+                    <div><dt>Last sign-in</dt><dd>{editingUser.last_sign_in_at ? new Date(editingUser.last_sign_in_at).toLocaleString() : "No sign-in recorded"}</dd></div>
+                    <div><dt>Last active</dt><dd>{editingUser.last_active_at ? new Date(editingUser.last_active_at).toLocaleString() : "Not recorded yet"}</dd></div>
+                    {accountSuspended && <div><dt>Suspended until</dt><dd>{new Date(editingUser.banned_until!).toLocaleString()}</dd></div>}
+                  </dl>
+                  <div className="admin-account-actions">
+                    <button className="account-reset-button" type="button" onClick={() => void sendPasswordReset()} disabled={saving || !editingUser.email}>{saving ? "Sending..." : "Send password reset code"}</button>
+                    {editingUser.id === ADMIN_USER_ID ? <p className="profile-hint">The owner account cannot be suspended from this panel.</p> : accountSuspended ? (
+                      <button className="account-reactivate-button" type="button" onClick={() => void updateAccountSuspension("none")} disabled={saving}>{saving ? "Updating..." : "Reactivate account"}</button>
+                    ) : (
+                      <div className="admin-suspend-actions">
+                        <label>Suspend for
+                          <select value={suspensionDuration} onChange={(event) => setSuspensionDuration(event.target.value)} disabled={saving}>
+                            <option value="24h">24 hours</option>
+                            <option value="168h">7 days</option>
+                            <option value="720h">30 days</option>
+                            <option value="876000h">Long-term</option>
+                          </select>
+                        </label>
+                        <button className="account-suspend-button" type="button" onClick={() => void updateAccountSuspension(suspensionDuration)} disabled={saving}>{saving ? "Suspending..." : "Suspend account"}</button>
+                      </div>
+                    )}
+                  </div>
+                </section>
                 <section className="admin-premium-control" aria-labelledby="admin-premium-title">
                   <div className="admin-premium-heading"><span className="admin-premium-mark"><Sparkles size={16} /></span><div><h3 id="admin-premium-title">Premium access</h3><p>{editingUser.is_premium ? "Premium is active for this profile." : "Choose a term to grant Premium."}</p></div><span className={`admin-premium-status ${editingUser.is_premium ? "active" : "inactive"}`}>{editingUser.is_premium ? "Active" : "Free"}</span></div>
                   <label className="admin-premium-duration">Membership term
