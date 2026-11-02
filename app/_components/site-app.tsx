@@ -1235,7 +1235,7 @@ export default function HomePage({
           <div className="top-actions">
             <a
               className="discord-invite-link"
-              href="https://discord.gg/2YJbb4Vrmb"
+              href="https://discord.gg/aaUwtmCUFA"
               target="_blank"
               rel="noreferrer"
             >
