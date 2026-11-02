@@ -175,8 +175,8 @@ export async function DELETE(request: Request) {
     const { error } = await admin.from("stories").delete().eq("id", id);
     if (error) return Response.json({ error: error.message }, { status: 400 });
   } else {
-    const { error } = await admin.from("profiles").delete().eq("id", id);
-    if (error) return Response.json({ error: error.message }, { status: 400 });
+    const { error: deleteError } = await admin.auth.admin.deleteUser(id);
+    if (deleteError) return Response.json({ error: deleteError.message }, { status: 400 });
   }
   return Response.json({ ok: true });
 }

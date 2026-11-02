@@ -8,23 +8,26 @@ export async function DELETE(request: Request) {
     error: userError,
   } = await authClient.auth.getUser();
 
-  if (userError || !user?.email) {
+  if (userError || !user) {
     return Response.json({ error: "You must be signed in to delete your account." }, { status: 401 });
   }
+
+  const providers = Array.isArray(user.app_metadata?.providers)
+    ? user.app_metadata.providers.map(String)
+    : [];
+  const hasPasswordProvider = providers.includes("email") || Boolean(user.email && user.app_metadata?.provider === "email");
 
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return Response.json({ error: "A password is required to delete your account." }, { status: 400 });
+    body = {};
   }
-  if (
-    typeof body !== "object" ||
-    body === null ||
-    !("password" in body) ||
-    typeof body.password !== "string" ||
-    !body.password
-  ) {
+  const password = typeof body === "object" && body !== null && "password" in body && typeof body.password === "string"
+    ? body.password
+    : "";
+
+  if (hasPasswordProvider && !password) {
     return Response.json({ error: "A password is required to delete your account." }, { status: 400 });
   }
 
@@ -37,17 +40,17 @@ export async function DELETE(request: Request) {
     return Response.json({ error: "Account deletion is not configured on the server." }, { status: 503 });
   }
 
-  const verificationClient = createClient(url, publicKey, {
+  if (hasPasswordProvider) {
+    if (!user.email) return Response.json({ error: "This account has no email address." }, { status: 400 });
+    const verificationClient = createClient(url, publicKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
-  const { data: verified, error: verificationError } =
-    await verificationClient.auth.signInWithPassword({
-      email: user.email,
-      password: body.password,
-    });
+    const { data: verified, error: verificationError } =
+      await verificationClient.auth.signInWithPassword({ email: user.email, password });
 
-  if (verificationError || verified.user?.id !== user.id) {
-    return Response.json({ error: "The password is incorrect." }, { status: 403 });
+    if (verificationError || verified.user?.id !== user.id) {
+      return Response.json({ error: "The password is incorrect." }, { status: 403 });
+    }
   }
 
   const adminClient = createClient(url, serviceKey, {

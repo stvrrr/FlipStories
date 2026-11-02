@@ -2028,6 +2028,7 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
   const [message, setMessage] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
+  const usesPasswordSignIn = Boolean(user?.app_metadata?.provider === "email" || (user?.app_metadata?.providers as string[] | undefined)?.includes("email"));
   const [deleteError, setDeleteError] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [securityMessage, setSecurityMessage] = useState("");
@@ -2432,9 +2433,9 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
             <span className="account-delete-mark"><Trash2 size={20} /></span>
             <p className="eyebrow">This cannot be undone</p>
             <h2 id="account-delete-title">Delete your account?</h2>
-            <p className="account-delete-copy">Your account and associated profile data will be permanently removed. Enter your password to confirm it’s really you.</p>
+            <p className="account-delete-copy">Your account and associated profile data will be permanently removed. {usesPasswordSignIn ? "Enter your password to confirm it’s really you." : "Confirm deletion with your authenticated Discord account."}</p>
             <form className="account-delete-form" onSubmit={deleteAccount}>
-              <label htmlFor="delete-account-password">Account password</label>
+              {usesPasswordSignIn && <><label htmlFor="delete-account-password">Account password</label>
               <input
                 id="delete-account-password"
                 type="password"
@@ -2444,11 +2445,11 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
                 value={deletePassword}
                 onChange={(event) => setDeletePassword(event.target.value)}
                 disabled={deleting}
-              />
+              /></>}
               {deleteError && <p className="profile-error" role="alert">{deleteError}</p>}
               <div className="account-delete-actions">
                 <button className="quiet-button" type="button" onClick={closeDeleteDialog} disabled={deleting}>Keep my account</button>
-                <button className="confirm-delete-button" type="submit" disabled={deleting || !deletePassword}>
+                <button className="confirm-delete-button" type="submit" disabled={deleting || (usesPasswordSignIn && !deletePassword)}>
                   <Trash2 size={15} /> {deleting ? "Deleting..." : "Delete permanently"}
                 </button>
               </div>
