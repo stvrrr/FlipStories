@@ -1317,7 +1317,7 @@ export default function HomePage({
             <DonationPanel address={process.env.NEXT_PUBLIC_LITECOIN_ADDRESS?.trim() ?? ""} />
           </section>
         )}
-        {view === "Settings" && <SettingsView user={user} theme={theme} setTheme={setTheme} mobileNavigation={mobileNavigation} setMobileNavigation={setMobileNavigation} language={language} setLanguage={setLanguage} notificationKinds={notificationKinds} setNotificationKinds={setNotificationKinds} onSignOut={handleSignOut} onDeleted={handleAccountDeleted} onSaved={async () => { await loadStories(); setView("Discover"); }} />}
+        {view === "Settings" && <SettingsView user={user} theme={theme} setTheme={setTheme} mobileNavigation={mobileNavigation} setMobileNavigation={setMobileNavigation} language={language} setLanguage={setLanguage} notificationKinds={notificationKinds} setNotificationKinds={setNotificationKinds} onSignOut={handleSignOut} onDeleted={handleAccountDeleted} onSaved={loadStories} />}
         {view === "PublicProfile" && publicProfileUsername && (
           <PublicProfile
             username={publicProfileUsername}
@@ -2141,6 +2141,7 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
         return;
       }
     }
+    setMessage("Profile saved.");
     await onSaved();
   };
   const verifyCurrentPassword = async (password: string) => {
