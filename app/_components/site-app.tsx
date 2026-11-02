@@ -2812,6 +2812,7 @@ function AdminPanel() {
 
 function AdminUserPanel() {
   const [data, setData] = useState<{ users: AdminUser[]; stories: Array<{ id: string; title: string; status: string; visibility: string; author_id: string; created_at: string; profiles?: { id: string } | { id: string }[] | null }> } | null>(null);
+  const [userSearch, setUserSearch] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [badgeMenuOpen, setBadgeMenuOpen] = useState(false);
@@ -2951,6 +2952,16 @@ function AdminUserPanel() {
     const relatedProfile = Array.isArray(story.profiles) ? story.profiles[0] : story.profiles;
     return story.author_id === selectedUserId || relatedProfile?.id === selectedUserId;
   }) ?? [];
+  const normalizedUserSearch = userSearch.trim().toLowerCase();
+  const filteredUsers = data?.users.filter((person) => {
+    if (!normalizedUserSearch) return true;
+    return [
+      person.id,
+      person.username,
+      person.display_name,
+      person.email ?? "",
+    ].some((value) => value.toLowerCase().includes(normalizedUserSearch));
+  }) ?? [];
   const accountSuspended = Boolean(editingUser?.banned_until && new Date(editingUser.banned_until).getTime() > Date.now());
 
   return (
@@ -2964,15 +2975,19 @@ function AdminUserPanel() {
         <div className="admin-grid">
           <div className="analytics-card">
             <span className="section-kicker">People</span>
-            <h2>{data.users.length} users</h2>
+            <h2>{filteredUsers.length === data.users.length ? `${data.users.length} users` : `${filteredUsers.length} of ${data.users.length} users`}</h2>
+            <label className="discover-search admin-search">
+              <Search size={15} />
+              <input type="search" value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Search users by name, username, email, or ID" aria-label="Search users" />
+            </label>
             <div className="admin-user-list">
-              {data.users.map((person) => (
+              {filteredUsers.length ? filteredUsers.map((person) => (
                 <button type="button" className={`admin-user-card ${selectedUserId === person.id ? "selected" : ""}`} key={person.id} onClick={() => setSelectedUserId(person.id)}>
                   <span className="avatar avatar-plum">{person.display_name.slice(0, 2).toUpperCase()}</span>
                   <span><strong>{person.display_name}</strong><small>@{person.username}{person.email ? ` · ${person.email}` : ""}</small></span>
                   <span className="admin-user-meta">Joined {new Date(person.created_at).toLocaleDateString()}</span>
                 </button>
-              ))}
+              )) : <p className="subtitle admin-search-empty">No users match your search.</p>}
             </div>
           </div>
           <div className="analytics-card admin-editor-panel">
@@ -3056,6 +3071,7 @@ function AdminUserPanel() {
 
 function PinningPanel() {
   const [stories, setStories] = useState<Array<{ id: string; title: string; status: string; visibility: string; is_pinned: boolean; pin_label: string | null }>>([]);
+  const [storySearch, setStorySearch] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -3068,6 +3084,12 @@ function PinningPanel() {
   };
 
   useEffect(() => { void load(); }, []);
+
+  const normalizedStorySearch = storySearch.trim().toLowerCase();
+  const filteredStories = stories.filter((story) => {
+    if (!normalizedStorySearch) return true;
+    return story.title.toLowerCase().includes(normalizedStorySearch) || story.id.toLowerCase().includes(normalizedStorySearch);
+  });
 
   const togglePin = async (story: { id: string; title: string; is_pinned: boolean; pin_label: string | null }) => {
     const pinLabel = story.is_pinned ? null : window.prompt("What label should appear on Discover?", story.pin_label ?? "Pinned");
@@ -3087,7 +3109,31 @@ function PinningPanel() {
     setMessage(nextPinned ? `Pinned “${story.title}” as “${pinLabel?.trim().slice(0, 40) || "Pinned"}”.` : `Unpinned “${story.title}”.`);
   };
 
-  return <section className="content-wrap admin-settings-wrap"><div className="analytics-card admin-pinning-panel"><span className="section-kicker">Pinned stories</span><h2>Choose stories for the front of Discover</h2>{error ? <p className="profile-error">{error}</p> : message ? <p className="admin-success">{message}</p> : null}<div className="admin-story-scroll">{stories.length ? stories.map((story) => <div className="admin-story-item" key={story.id}><div><strong>{story.title}</strong><small>{story.visibility} · {story.status}{story.is_pinned && story.pin_label ? ` · ${story.pin_label}` : ""}</small></div><button type="button" className={`quiet-button ${story.is_pinned ? "selected" : ""}`} onClick={() => void togglePin(story)} disabled={savingId === story.id} aria-label={story.is_pinned ? "Unpin story" : "Pin story"} title={story.is_pinned ? "Unpin story" : "Pin story"}><Pin size={14} /></button></div>) : <p className="subtitle">No stories yet.</p>}</div></div></section>;
+  return (
+    <section className="content-wrap admin-settings-wrap">
+      <div className="analytics-card admin-pinning-panel">
+        <span className="section-kicker">Pinned stories</span>
+        <h2>Choose stories for the front of Discover</h2>
+        {error ? <p className="profile-error">{error}</p> : message ? <p className="admin-success">{message}</p> : null}
+        <label className="discover-search admin-search">
+          <Search size={15} />
+          <input type="search" value={storySearch} onChange={(event) => setStorySearch(event.target.value)} placeholder="Search stories by title or story ID" aria-label="Search stories by title or story ID" />
+        </label>
+        <div className="admin-story-scroll">
+          {filteredStories.length ? filteredStories.map((story) => (
+            <div className="admin-story-item" key={story.id}>
+              <div>
+                <strong>{story.title}</strong>
+                <small>{story.visibility} · {story.status}{story.is_pinned && story.pin_label ? ` · ${story.pin_label}` : ""}</small>
+                <small className="admin-story-id">Story ID: {story.id}</small>
+              </div>
+              <button type="button" className={`quiet-button ${story.is_pinned ? "selected" : ""}`} onClick={() => void togglePin(story)} disabled={savingId === story.id} aria-label={story.is_pinned ? "Unpin story" : "Pin story"} title={story.is_pinned ? "Unpin story" : "Pin story"}><Pin size={14} /></button>
+            </div>
+          )) : <p className="subtitle">{stories.length ? "No stories match your search." : "No stories yet."}</p>}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function ShelfView({

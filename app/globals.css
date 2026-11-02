@@ -278,6 +278,9 @@
 .admin-grid { display:grid; grid-template-columns:380px minmax(0,1fr); gap:18px; margin-top:40px; }
 .admin-grid h2 { margin:8px 0 22px; font-family:"Libre Baskerville",serif; font-size:23px; font-weight:400; }
 .admin-user-list { display:grid; gap:12px; max-height:560px; overflow:auto; padding-right:6px; }
+.admin-search { margin-bottom:18px; }
+.admin-search-empty { padding:20px 0; }
+.admin-story-id { display:block; margin-top:3px; font-family:monospace; }
 .admin-user-card { display:flex; align-items:center; gap:10px; width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:var(--paper); color:var(--ink); text-align:left; }
 .admin-user-card.selected { border-color:var(--sage); background:var(--sage-soft); }
 .admin-user-card strong { display:block; font-size:11px; font-weight:600; }
