@@ -1981,14 +1981,6 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
   const saveProfile = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setSaving(true); setMessage("");
     if (!user) { setSaving(false); return; }
-    let avatarUrl = profile.avatar_url;
-    if (avatarFile) {
-      const path = `${user.id}/${crypto.randomUUID()}-${avatarFile.name}`;
-      const { error: uploadError } = await supabase.storage.from("avatars").upload(path, avatarFile, { upsert: false, contentType: avatarFile.type });
-      if (uploadError) { setMessage(`Avatar upload failed: ${uploadError.message}`); setSaving(false); return; }
-      avatarUrl = supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
-    }
-
     let profileLinks: string[] = [];
     try {
       profileLinks = sanitizeProfileLinks(Array.from({ length: PROFILE_LINK_LIMIT }, (_, index) => profile.profile_links[index] ?? ""));
@@ -1998,16 +1990,58 @@ function SettingsView({ user, theme, setTheme, mobileNavigation, setMobileNaviga
       return;
     }
 
+    let avatarUrl = profile.avatar_url;
+    let uploadedAvatarPath: string | null = null;
+    if (avatarFile) {
+      uploadedAvatarPath = `${user.id}/${crypto.randomUUID()}-${avatarFile.name}`;
+      const { error: uploadError } = await supabase.storage.from("avatars").upload(uploadedAvatarPath, avatarFile, { upsert: false, contentType: avatarFile.type });
+      if (uploadError) { setMessage(`Avatar upload failed: ${uploadError.message}`); setSaving(false); return; }
+      avatarUrl = supabase.storage.from("avatars").getPublicUrl(uploadedAvatarPath).data.publicUrl;
+    }
+
     const { error } = await supabase.from("profiles").update({ username: profile.username.trim().toLowerCase(), display_name: profile.display_name.trim(), bio: profile.bio.trim(), avatar_url: avatarUrl, profile_links: profileLinks }).eq("id", user.id).select("id").single();
-    setSaving(false);
     if (error) {
+      if (uploadedAvatarPath) await supabase.storage.from("avatars").remove([uploadedAvatarPath]);
+      setSaving(false);
       const friendly = error.code === "23505" ? "That username is already taken." :
         error.code === "PGRST116" ? "Your profile record is missing. Run the profile setup SQL in Supabase first." :
         error.message.includes("profile_links") ? "Please run the profile links migration in Supabase before saving links." : error.message;
       setMessage(friendly);
       return;
     }
-    setProfile({ ...profile, avatar_url: avatarUrl, profile_links: profileLinks }); setAvatarFile(null); await onSaved();
+    setSaving(false);
+    setProfile({ ...profile, avatar_url: avatarUrl, profile_links: profileLinks }); setAvatarFile(null);
+    if (uploadedAvatarPath) {
+      const storage = supabase.storage.from("avatars");
+      let offset = 0;
+      let cleanupFailed = false;
+      const previousPaths: string[] = [];
+      while (true) {
+        const { data: files, error: listError } = await storage.list(user.id, { limit: 1000, offset });
+        if (listError) {
+          console.error("The new avatar was saved, but previous avatars could not be listed for cleanup.", listError);
+          cleanupFailed = true;
+          break;
+        }
+        previousPaths.push(...(files ?? [])
+          .filter((file: { id: string | null; name: string }) => file.id && file.name && `${user.id}/${file.name}` !== uploadedAvatarPath)
+          .map((file: { name: string }) => `${user.id}/${file.name}`));
+        if ((files ?? []).length < 1000) break;
+        offset += (files ?? []).length;
+      }
+      for (let index = 0; !cleanupFailed && index < previousPaths.length; index += 1000) {
+        const { error: removeError } = await storage.remove(previousPaths.slice(index, index + 1000));
+          if (removeError) {
+            console.error("The new avatar was saved, but previous avatar files could not be removed.", removeError);
+            cleanupFailed = true;
+          }
+      }
+      if (cleanupFailed) {
+        setMessage("Profile saved, but some old avatar files could not be removed.");
+        return;
+      }
+    }
+    await onSaved();
   };
   const verifyCurrentPassword = async (password: string) => {
     if (!user?.email) {
