@@ -112,7 +112,6 @@ export async function GET(request) {
       .eq("id", bestMatch.id)
       .eq("status", "published")
       .eq("visibility", "public")
-      .or("premium_until.is.null,premium_until.lte.now()")
       .maybeSingle();
 
     if (error || !story) {
