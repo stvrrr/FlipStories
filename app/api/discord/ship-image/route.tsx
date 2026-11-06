@@ -7,6 +7,11 @@ function safeUrl(value: string | null) {
   if (!value) return null;
   try {
     const url = new URL(value);
+    if (url.hostname === "cdn.discordapp.com" || url.hostname === "media.discordapp.net") {
+      url.pathname = url.pathname.replace(/\.webp$/, ".png");
+      url.searchParams.delete("format");
+      url.searchParams.set("format", "png");
+    }
     return url.protocol === "https:" ? url.toString() : null;
   } catch {
     return null;
