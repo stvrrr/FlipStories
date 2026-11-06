@@ -186,9 +186,25 @@ async function handleLike(request, action) {
 }
 
 export async function POST(request) {
-  return handleLike(request, "toggle");
+  try {
+    return await handleLike(request, "toggle");
+  } catch (error) {
+    console.error("Discord story like toggle failed:", error);
+    return Response.json(
+      { error: "Could not process the Discord story like" },
+      { status: 500 },
+    );
+  }
 }
 
 export async function DELETE(request) {
-  return handleLike(request, "unlike");
+  try {
+    return await handleLike(request, "unlike");
+  } catch (error) {
+    console.error("Discord story like removal failed:", error);
+    return Response.json(
+      { error: "Could not remove the Discord story like" },
+      { status: 500 },
+    );
+  }
 }

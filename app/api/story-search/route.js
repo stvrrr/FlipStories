@@ -60,69 +60,77 @@ function titleSimilarity(query, candidate) {
 }
 
 export async function GET(request) {
-  if (!isAuthorized(request)) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  try {
+    if (!isAuthorized(request)) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-  const query = new URL(request.url).searchParams.get("q")?.trim();
-  if (!query || query.length > 120) {
-    return Response.json({ error: "A search query of 1 to 120 characters is required" }, { status: 400 });
-  }
+    const query = new URL(request.url).searchParams.get("q")?.trim();
+    if (!query || query.length > 120) {
+      return Response.json({ error: "A search query of 1 to 120 characters is required" }, { status: 400 });
+    }
 
-  const admin = createAdminClient();
-  if (!admin) {
-    return Response.json({ error: "Story search is not configured" }, { status: 503 });
-  }
+    const admin = createAdminClient();
+    if (!admin) {
+      return Response.json({ error: "Story search is not configured" }, { status: 503 });
+    }
 
-  let bestMatch = null;
-  let offset = 0;
-  const pageSize = 1000;
-  while (true) {
-    const { data: stories, error } = await admin
+    let bestMatch = null;
+    let offset = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data: stories, error } = await admin
+        .from("stories")
+        .select("id,title")
+        .eq("status", "published")
+        .eq("visibility", "public")
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) {
+        return Response.json({ error: "Could not search stories" }, { status: 500 });
+      }
+
+      for (const story of stories ?? []) {
+        const score = titleSimilarity(query, story.title ?? "");
+        if (!bestMatch || score > bestMatch.score) {
+          bestMatch = { id: story.id, score };
+        }
+      }
+      if ((stories ?? []).length < pageSize) break;
+      offset += pageSize;
+    }
+
+    if (!bestMatch || bestMatch.score < MINIMUM_MATCH_SCORE) {
+      return Response.json({ story: null }, { headers: { "Cache-Control": "no-store" } });
+    }
+
+    const { data: story, error } = await admin
       .from("stories")
-      .select("id,title")
+      .select("id,title,excerpt,category,created_at,author_id,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)")
+      .eq("id", bestMatch.id)
       .eq("status", "published")
       .eq("visibility", "public")
-      .order("id", { ascending: true })
-      .range(offset, offset + pageSize - 1);
+      .or("premium_until.is.null,premium_until.lte.now()")
+      .maybeSingle();
 
-    if (error) {
-      return Response.json({ error: "Could not search stories" }, { status: 500 });
+    if (error || !story) {
+      return Response.json({ error: "Could not load matching story" }, { status: 500 });
     }
 
-    for (const story of stories ?? []) {
-      const score = titleSimilarity(query, story.title ?? "");
-      if (!bestMatch || score > bestMatch.score) {
-        bestMatch = { id: story.id, score };
-      }
+    const details = await loadStoryDetails(admin, story, request.url);
+    if (details.error) {
+      return Response.json({ error: details.error }, { status: 500 });
     }
-    if ((stories ?? []).length < pageSize) break;
-    offset += pageSize;
+
+    return Response.json({
+      story: { ...details.story, matchScore: Math.round(bestMatch.score * 100) },
+    }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    console.error("Story search failed:", error);
+    return Response.json(
+      { error: "Could not search for the story" },
+      { status: 500 },
+    );
   }
-
-  if (!bestMatch || bestMatch.score < MINIMUM_MATCH_SCORE) {
-    return Response.json({ story: null }, { headers: { "Cache-Control": "no-store" } });
-  }
-
-  const { data: story, error } = await admin
-    .from("stories")
-    .select("id,title,excerpt,category,created_at,author_id,profiles!stories_author_id_fkey(username,display_name,avatar_url),likes(count)")
-    .eq("id", bestMatch.id)
-    .eq("status", "published")
-    .eq("visibility", "public")
-    .or("premium_until.is.null,premium_until.lte.now()")
-    .maybeSingle();
-
-  if (error || !story) {
-    return Response.json({ error: "Could not load matching story" }, { status: 500 });
-  }
-
-  const details = await loadStoryDetails(admin, story, request.url);
-  if (details.error) {
-    return Response.json({ error: details.error }, { status: 500 });
-  }
-
-  return Response.json({
-    story: { ...details.story, matchScore: Math.round(bestMatch.score * 100) },
-  }, { headers: { "Cache-Control": "no-store" } });
 }
