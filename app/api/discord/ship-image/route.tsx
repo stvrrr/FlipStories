@@ -35,28 +35,33 @@ export async function GET(request: Request) {
           justifyContent: "center",
           gap: 45,
           color: "#fff",
-          background: "linear-gradient(135deg, #191425 0%, #4a183d 55%, #c43d72 100%)",
+          position: "relative",
+          background: "linear-gradient(135deg, #fff0f6 0%, #ffc2d8 48%, #ff8fab 100%)",
           fontFamily: "sans-serif",
         }}
       >
+        <div style={{ position: "absolute", left: 32, top: 25, display: "flex", fontSize: 54, color: "#ffffff99" }}>♥</div>
+        <div style={{ position: "absolute", right: 38, bottom: 24, display: "flex", fontSize: 68, color: "#ffffff99" }}>♥</div>
+        <div style={{ position: "absolute", left: 70, bottom: 55, display: "flex", fontSize: 28, color: "#ffffff88" }}>♥</div>
+        <div style={{ position: "absolute", right: 105, top: 38, display: "flex", fontSize: 34, color: "#ffffff88" }}>♥</div>
         <div style={{ width: 300, display: "flex", flexDirection: "column", alignItems: "center", gap: 18 }}>
           <div style={{ width: 220, height: 220, display: "flex" }}>
-            <img src={leftAvatar} width={220} height={220} style={{ borderRadius: 110, border: "8px solid rgba(255,255,255,.85)" }} />
+            <img src={leftAvatar} width={220} height={220} style={{ borderRadius: 110, border: "8px solid #fff", boxShadow: "0 18px 45px rgba(167, 37, 84, 0.28)" }} />
           </div>
-          <div style={{ display: "flex", fontSize: 34, fontWeight: 700 }}>{leftName}</div>
+          <div style={{ display: "flex", fontSize: 34, fontWeight: 700, color: "#743653" }}>{leftName}</div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-          <div style={{ display: "flex", fontSize: 110 }}>♥</div>
-          <div style={{ display: "flex", fontSize: 76, fontWeight: 800 }}>{rate}%</div>
-          <div style={{ display: "flex", fontSize: 28, color: "#ffd9e7" }}>{matchLabel}</div>
+        <div style={{ width: 330, height: 330, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 165, background: "rgba(255,255,255,.62)", border: "6px solid rgba(255,255,255,.92)", boxShadow: "0 24px 70px rgba(167, 37, 84, 0.2)" }}>
+          <div style={{ display: "flex", fontSize: 82, color: "#ed4b86" }}>♥</div>
+          <div style={{ display: "flex", fontSize: 76, fontWeight: 800, color: "#743653" }}>{rate}%</div>
+          <div style={{ display: "flex", fontSize: 28, color: "#b34270" }}>{matchLabel}</div>
         </div>
 
         <div style={{ width: 300, display: "flex", flexDirection: "column", alignItems: "center", gap: 18 }}>
           <div style={{ width: 220, height: 220, display: "flex" }}>
-            <img src={rightAvatar} width={220} height={220} style={{ borderRadius: 110, border: "8px solid rgba(255,255,255,.85)" }} />
+            <img src={rightAvatar} width={220} height={220} style={{ borderRadius: 110, border: "8px solid #fff", boxShadow: "0 18px 45px rgba(167, 37, 84, 0.28)" }} />
           </div>
-          <div style={{ display: "flex", fontSize: 34, fontWeight: 700 }}>{rightName}</div>
+          <div style={{ display: "flex", fontSize: 34, fontWeight: 700, color: "#743653" }}>{rightName}</div>
         </div>
       </div>
     ),
