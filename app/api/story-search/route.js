@@ -88,6 +88,7 @@ export async function GET(request) {
         .range(offset, offset + pageSize - 1);
 
       if (error) {
+        console.error("Story title search failed:", error);
         return Response.json({ error: "Could not search stories" }, { status: 500 });
       }
 
@@ -115,11 +116,13 @@ export async function GET(request) {
       .maybeSingle();
 
     if (error || !story) {
+      console.error("Story match detail query failed:", error);
       return Response.json({ error: "Could not load matching story" }, { status: 500 });
     }
 
     const details = await loadStoryDetails(admin, story, request.url);
     if (details.error) {
+      console.error("Story content detail query failed:", details.error);
       return Response.json({ error: details.error }, { status: 500 });
     }
 
