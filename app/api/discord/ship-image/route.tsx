@@ -18,7 +18,11 @@ async function avatarDataUrl(value: string | null) {
   if (!url) return null;
 
   try {
-    const response = await fetch(url, { headers: { "User-Agent": "FlipStories-Ship-Image/1.0" } });
+    const response = await fetch(url, {
+      headers: { "User-Agent": "FlipStories-Ship-Image/1.0" },
+      next: { revalidate: 0 },
+      signal: AbortSignal.timeout(8_000),
+    });
     if (!response.ok) return null;
     const contentType = response.headers.get("content-type")?.split(";")[0] ?? "image/png";
     if (!contentType.startsWith("image/")) return null;
