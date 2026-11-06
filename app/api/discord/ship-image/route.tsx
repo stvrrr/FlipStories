@@ -13,6 +13,22 @@ function safeUrl(value: string | null) {
   }
 }
 
+async function avatarDataUrl(value: string | null) {
+  const url = safeUrl(value);
+  if (!url) return null;
+
+  try {
+    const response = await fetch(url, { headers: { "User-Agent": "FlipStories-Ship-Image/1.0" } });
+    if (!response.ok) return null;
+    const contentType = response.headers.get("content-type")?.split(";")[0] ?? "image/png";
+    if (!contentType.startsWith("image/")) return null;
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return `data:${contentType};base64,${bytes.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const leftName = (params.get("leftName") ?? "User 1").slice(0, 32);
@@ -20,8 +36,8 @@ export async function GET(request: Request) {
   const parsedRate = Number(params.get("rate"));
   const rate = Number.isFinite(parsedRate) ? Math.max(0, Math.min(100, Math.round(parsedRate))) : 0;
   const placeholderAvatar = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Crect width='220' height='220' fill='%235A506C'/%3E%3Ccircle cx='110' cy='82' r='42' fill='%23FFFFFF' fill-opacity='.7'/%3E%3Ccircle cx='110' cy='205' r='78' fill='%23FFFFFF' fill-opacity='.7'/%3E%3C/svg%3E";
-  const leftAvatar = safeUrl(params.get("leftAvatar")) ?? placeholderAvatar;
-  const rightAvatar = safeUrl(params.get("rightAvatar")) ?? placeholderAvatar;
+  const leftAvatar = (await avatarDataUrl(params.get("leftAvatar"))) ?? placeholderAvatar;
+  const rightAvatar = (await avatarDataUrl(params.get("rightAvatar"))) ?? placeholderAvatar;
   const matchLabel = rate >= 91 ? "Soulmates!" : rate >= 70 ? "Great match!" : rate >= 40 ? "Possible..." : "Maybe not";
 
   return new ImageResponse(
